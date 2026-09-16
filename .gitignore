@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.vercel/
+.env*
+*.tsbuildinfo
+test-results/
+playwright-report/
+public/tldraw/
+public/vendor/

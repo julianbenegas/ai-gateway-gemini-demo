@@ -1,0 +1,38 @@
+{
+  "name": "margin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "test": "playwright test",
+    "postinstall": "node scripts/copy-assets.mjs",
+    "format": "prettier --write src scripts tests *.ts *.json *.md"
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.82",
+    "@ai-sdk/react": "4.0.105",
+    "@tldraw/assets": "5.4.2",
+    "ai": "7.0.102",
+    "html-to-image": "1.11.13",
+    "lucide-react": "1.46.0",
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tldraw": "5.4.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
