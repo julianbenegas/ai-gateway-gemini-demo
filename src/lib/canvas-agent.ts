@@ -7,7 +7,12 @@ import {
   type TLShapeId,
   type TLShapePartial,
 } from 'tldraw'
-import { applySchema, inspectSchema, readShapesSchema } from './tools'
+import {
+  applySchema,
+  editHtmlSchema,
+  inspectSchema,
+  readShapesSchema,
+} from './tools'
 import { capturePreview } from './preview'
 
 export function focusCanvas(editor: Editor, bounds: Box) {
@@ -217,6 +222,39 @@ export async function captureCanvas(editor: Editor) {
   return { image: url, warnings, bounds: bounds.toJson() }
 }
 
+function editHtml(editor: Editor, input: unknown) {
+  const { id, replacements } = editHtmlSchema.parse(input)
+  const shape = editor.getShape(id as TLShapeId)
+  if (!shape) return { updatedIds: [], missingIds: [id] }
+  if (shape.type !== 'website')
+    return {
+      updatedIds: [],
+      error: `${id} is a ${shape.type} shape, not a website.`,
+      context: readBoard(editor),
+    }
+  let html = shape.props.html
+  const matches = replacements.map(({ search, replace, all }) => {
+    let count = 0
+    if (search) {
+      const replacement = () => {
+        count++
+        return replace
+      }
+      html = all
+        ? html.replaceAll(search, replacement)
+        : html.replace(search, replacement)
+    }
+    return count
+  })
+  const result = applyCanvasActions(editor, {
+    actions:
+      html === shape.props.html
+        ? []
+        : [{ op: 'update', shape: { id, props: { html } } }],
+  })
+  return { ...result, matches, ...(matches.includes(0) ? { html } : {}) }
+}
+
 export async function executeCanvasTool(
   editor: Editor,
   name: string,
@@ -237,6 +275,8 @@ export async function executeCanvasTool(
     }
     case 'apply_actions':
       return applyCanvasActions(editor, args)
+    case 'edit_html':
+      return editHtml(editor, args)
     case 'inspect_canvas': {
       const { question } = inspectSchema.parse(args)
       const context = readBoard(editor, { includeHtml: false })

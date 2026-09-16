@@ -12,10 +12,10 @@
     "format": "prettier --write src scripts tests *.ts *.json *.md"
   },
   "dependencies": {
-    "@ai-sdk/gateway": "4.0.82",
-    "@ai-sdk/react": "4.0.105",
+    "@ai-sdk/gateway": "4.0.83",
+    "@ai-sdk/react": "4.0.106",
     "@tldraw/assets": "5.4.2",
-    "ai": "7.0.102",
+    "ai": "7.0.103",
     "geist": "1.7.2",
     "html-to-image": "1.11.13",
     "lucide-react": "1.46.0",

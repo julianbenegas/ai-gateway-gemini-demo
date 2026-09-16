@@ -58,6 +58,10 @@ async function mockGateway(page: Page) {
   let n = 0
   return {
     sent,
+    outputs,
+    send(event: Record<string, unknown>) {
+      socket.send(JSON.stringify({ ...event, raw: event.raw ?? {} }))
+    },
     async call(name: string, args: unknown, id = `call-${++n}`) {
       await expect.poll(() => Boolean(socket)).toBe(true)
       socket!.send(
@@ -83,6 +87,232 @@ async function connectVoice(page: Page) {
     page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
 }
+
+test('incomplete tool arguments keep voice connected and recover with a short edit', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  gateway.send({
+    type: 'function-call-arguments-done',
+    responseId: 'response-cut-off',
+    itemId: 'item-cut-off',
+    callId: 'call-cut-off',
+    name: 'apply_actions',
+    arguments:
+      '{"actions":[{"op":"update","shape":{"id":"shape:forma","props":{"html":"<!doctype html>',
+  })
+  gateway.send({
+    type: 'response-done',
+    responseId: 'response-cut-off',
+    status: 'incomplete',
+    raw: { response: { status_details: { reason: 'max_output_tokens' } } },
+  })
+  await expect.poll(() => gateway.outputs.has('call-cut-off')).toBe(true)
+  expect(gateway.outputs.get('call-cut-off')).toMatchObject({
+    error: expect.stringContaining('not executed'),
+  })
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+  const heading = page
+    .frameLocator('iframe[title="Forma · Starting point"]')
+    .getByRole('heading')
+  await expect(heading).toContainText('Good spaces.')
+  await expect
+    .poll(
+      () =>
+        gateway.sent.filter((event) => event.type === 'response-create').length,
+    )
+    .toBe(1)
+  const result = await gateway.call('edit_html', {
+    id: 'shape:forma',
+    replacements: [{ search: 'Good spaces.', replace: 'Great.' }],
+  })
+  expect(result.updatedIds).toEqual(['shape:forma'])
+  expect(result.matches).toEqual([1])
+  await expect(heading).toContainText('Great.')
+  await expect(page.locator('.voice-notice')).not.toContainText(
+    'Failed to parse',
+  )
+})
+
+function sendIncompleteCall(
+  gateway: Awaited<ReturnType<typeof mockGateway>>,
+  id: string,
+) {
+  const args =
+    '{"actions":[{"op":"update","shape":{"id":"shape:forma","props":{"html":"<!doctype html>'
+  const event = {
+    responseId: `response-${id}`,
+    itemId: `item-${id}`,
+    callId: `call-${id}`,
+    name: 'apply_actions',
+  }
+  gateway.send({ type: 'function-call-arguments-delta', ...event, delta: args })
+  gateway.send({
+    type: 'function-call-arguments-done',
+    ...event,
+    arguments: args,
+  })
+}
+
+test('cancelled or interrupted tool output does not restart the old request', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  sendIncompleteCall(gateway, 'cancelled')
+  gateway.send({
+    type: 'response-done',
+    responseId: 'response-cancelled',
+    status: 'cancelled',
+  })
+  gateway.send({ type: 'response-created', responseId: 'response-interrupted' })
+  gateway.send({
+    type: 'speech-started',
+    audioStartMs: 0,
+    itemId: 'user-interrupt',
+  })
+  sendIncompleteCall(gateway, 'interrupted')
+  gateway.send({
+    type: 'response-done',
+    responseId: 'response-interrupted',
+    status: 'incomplete',
+  })
+  await expect.poll(() => gateway.outputs.has('call-interrupted')).toBe(true)
+  await gateway.call('read_board', {})
+  expect(
+    gateway.sent.filter((event) => event.type === 'response-create'),
+  ).toHaveLength(0)
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+})
+
+test('malformed tool recovery retries once and deduplicates calls', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  for (const id of ['first', 'retry']) {
+    sendIncompleteCall(gateway, id)
+    sendIncompleteCall(gateway, id)
+    gateway.send({
+      type: 'response-done',
+      responseId: `response-${id}`,
+      status: 'incomplete',
+    })
+    await expect.poll(() => gateway.outputs.has(`call-${id}`)).toBe(true)
+  }
+  await expect(page.locator('.voice-notice.is-error')).toHaveText(
+    /That edit didn’t finish. Still listening./,
+  )
+  expect(
+    gateway.sent.filter((event) => event.type === 'response-create'),
+  ).toHaveLength(1)
+  const outputs = gateway.sent.filter(
+    (event: any) => event.item?.type === 'function-call-output',
+  )
+  expect(outputs).toHaveLength(2)
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+  gateway.send({
+    type: 'speech-started',
+    audioStartMs: 100,
+    itemId: 'user-new',
+  })
+  sendIncompleteCall(gateway, 'new-turn')
+  gateway.send({
+    type: 'response-done',
+    responseId: 'response-new-turn',
+    status: 'incomplete',
+  })
+  await expect
+    .poll(
+      () =>
+        gateway.sent.filter((event) => event.type === 'response-create').length,
+    )
+    .toBe(2)
+})
+
+test('mixed valid and incomplete tool calls produce only one continuation', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  sendIncompleteCall(gateway, 'mixed')
+  gateway.send({
+    type: 'function-call-arguments-done',
+    responseId: 'response-mixed',
+    itemId: 'item-valid',
+    callId: 'call-valid',
+    name: 'read_board',
+    arguments: '{}',
+  })
+  gateway.send({
+    type: 'response-done',
+    responseId: 'response-mixed',
+    status: 'completed',
+  })
+  await expect.poll(() => gateway.outputs.has('call-valid')).toBe(true)
+  await expect
+    .poll(
+      () =>
+        gateway.sent.filter((event) => event.type === 'response-create').length,
+    )
+    .toBe(1)
+  expect(gateway.outputs.has('call-mixed')).toBe(true)
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+})
+
+test('short HTML edits use literal replacements, return unmatched source, and undo together', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await page.getByRole('button', { name: 'Select — V', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await connectVoice(page)
+  const result = await gateway.call('edit_html', {
+    id: 'shape:forma',
+    replacements: [
+      { search: 'Good spaces.', replace: 'Great $& $1 $$.' },
+      { search: '#28372f', replace: '#112233', all: true },
+      { search: 'no such source', replace: 'Unused' },
+      { search: '', replace: 'Unused' },
+    ],
+  })
+  expect(result.selectedIds).toEqual([])
+  expect(result.updatedIds).toEqual(['shape:forma'])
+  expect(result.matches[0]).toBe(1)
+  expect(result.matches[1]).toBeGreaterThan(1)
+  expect(result.matches.slice(2)).toEqual([0, 0])
+  expect(result.html).toContain('Great $& $1 $$.')
+  expect(result.html).not.toContain('#28372f')
+  expect(result.html).not.toContain('Unused')
+  const heading = page
+    .frameLocator('iframe[title="Forma · Starting point"]')
+    .getByRole('heading')
+  await expect(heading).toContainText('Great $& $1 $$.')
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(heading).toContainText('Good spaces.')
+  const after = await gateway.call('read_shapes', { ids: ['shape:forma'] })
+  expect(after[0].props.html).toContain('#28372f')
+  const missing = await gateway.call('edit_html', {
+    id: 'shape:gone',
+    replacements: [{ search: 'x', replace: 'y' }],
+  })
+  expect(missing.updatedIds).toEqual([])
+  expect(missing.missingIds).toEqual(['shape:gone'])
+})
 
 test('HTML editing, responsive copies, and separate boards survive reload', async ({
   page,

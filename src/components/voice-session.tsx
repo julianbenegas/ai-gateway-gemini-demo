@@ -21,6 +21,7 @@ const model = gateway.experimental_realtime(LIVE_MODEL)
 const labels: Record<string, string> = {
   read_board: 'Looking at your board',
   read_shapes: 'Reading the design',
+  edit_html: 'Updating the website',
   apply_actions: 'Updating the canvas',
   inspect_canvas: 'Taking a closer look',
 }
@@ -40,6 +41,13 @@ export function VoiceSession({ editor }: { editor: Editor }) {
   const ending = useRef(false)
   const abort = useRef(new AbortController())
   const calls = useRef(new Map<string, Promise<unknown>>())
+  const toolResponses = useRef(
+    new Map<
+      string,
+      { valid: boolean; invalid: boolean; interrupted: boolean }
+    >(),
+  )
+  const retriedTool = useRef(false)
   const lastContext = useRef<string | null>(null)
   const attention = useValue(
     'voice attention',
@@ -63,9 +71,75 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     api: { token: '/api/realtime' },
     sessionConfig,
     onEvent: (event) => {
-      if (event.type === 'speech-started') void sendContext().catch(() => {})
+      if (ending.current || !mounted.current) return
+      if (event.type === 'speech-started') {
+        retriedTool.current = false
+        for (const response of toolResponses.current.values())
+          response.interrupted = true
+        void sendContext().catch(() => {})
+      }
+      if (
+        event.type === 'response-created' ||
+        event.type === 'function-call-arguments-done'
+      ) {
+        const response = toolResponses.current.get(event.responseId) ?? {
+          valid: false,
+          invalid: false,
+          interrupted: false,
+        }
+        toolResponses.current.set(event.responseId, response)
+        if (event.type === 'function-call-arguments-done') {
+          try {
+            JSON.parse(event.arguments)
+            response.valid = true
+          } catch {
+            response.invalid = true
+            if (!calls.current.has(event.callId)) {
+              const result = {
+                error:
+                  'Tool arguments were incomplete or invalid JSON. This call was not executed. Recover using the source already in context; prefer edit_html with short replacements for existing websites. Do not resend a whole page for a small edit. If a full rewrite was cut off, split it into smaller edits.',
+              }
+              calls.current.set(event.callId, Promise.resolve(result))
+              realtime.addToolOutput(event.callId, result)
+            }
+          }
+        }
+      }
+      if (event.type === 'response-done') {
+        const response = toolResponses.current.get(event.responseId)
+        toolResponses.current.delete(event.responseId)
+        if (!response?.invalid) return
+        const raw = event.raw as {
+          response?: { status_details?: { reason?: string } }
+        }
+        console.warn('Realtime tool response did not parse', {
+          responseId: event.responseId,
+          status: event.status,
+          reason: raw?.response?.status_details?.reason,
+        })
+        if (
+          response.valid ||
+          response.interrupted ||
+          event.status === 'cancelled'
+        )
+          return
+        if (
+          !retriedTool.current &&
+          (event.status === 'completed' || event.status === 'incomplete')
+        ) {
+          retriedTool.current = true
+          realtime.requestResponse()
+        } else {
+          setActivity({
+            id: event.responseId,
+            label: 'That edit didn’t finish. Still listening.',
+            state: 'error',
+          })
+        }
+      }
     },
     onError: (error) => {
+      if (error.message.startsWith('Failed to parse tool arguments:')) return
       epoch.current++
       ending.current = true
       abort.current.abort()
@@ -258,6 +332,8 @@ export function VoiceSession({ editor }: { editor: Editor }) {
         ending.current = false
         abort.current = new AbortController()
         calls.current.clear()
+        toolResponses.current.clear()
+        retriedTool.current = false
         lastContext.current = null
         setActivity(null)
         await connect({ capture: false })
