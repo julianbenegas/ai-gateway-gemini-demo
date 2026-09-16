@@ -1,5 +1,5 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 test('API origin checks accept the browser host and reject other origins', async ({
   request,
@@ -26,6 +26,21 @@ async function openWorkspace(page: Page) {
       .frameLocator('iframe[title="Forma · Starting point"]')
       .getByRole('heading'),
   ).toContainText('Good spaces.')
+}
+
+async function openWebsiteMenu(page: Page) {
+  const box = (await page
+    .locator('iframe[title="Forma · Starting point"]')
+    .boundingBox())!
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
+    button: 'right',
+  })
+  await expect(page.getByTestId('context-menu')).toBeVisible()
+}
+
+async function openCode(page: Page) {
+  await openWebsiteMenu(page)
+  await page.getByRole('menuitem', { name: 'View code', exact: true }).click()
 }
 
 async function mockGateway(page: Page) {
@@ -314,11 +329,11 @@ test('short HTML edits use literal replacements, return unmatched source, and un
   expect(missing.missingIds).toEqual(['shape:gone'])
 })
 
-test('HTML editing, responsive copies, and separate boards survive reload', async ({
+test('HTML editing, native duplication, and separate boards survive reload', async ({
   page,
 }) => {
   await openWorkspace(page)
-  await page.getByRole('button', { name: 'Code', exact: true }).click()
+  await openCode(page)
   const source = page.getByRole('textbox', { name: 'Website HTML' })
   await source.fill(
     (await source.inputValue()).replace('Good spaces.', 'Thoughtful spaces.'),
@@ -326,20 +341,23 @@ test('HTML editing, responsive copies, and separate boards survive reload', asyn
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click()
   await expect(
     page
-      .frameLocator('iframe[title="Forma · Starting point"]')
+      .locator('iframe[title="Forma · Starting point"]')
+      .first()
+      .contentFrame()
       .getByRole('heading'),
   ).toContainText('Thoughtful spaces.')
-  await page.getByRole('button', { name: 'Mobile', exact: true }).click()
-  await expect(page.locator('.website-list button')).toHaveCount(2)
-  await expect(page.locator('.website-list')).toContainText('390 × 760')
+  await page.getByRole('button', { name: 'Select — V', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+d')
+  await expect(page.locator('.website-shape iframe')).toHaveCount(2)
   await page.getByRole('button', { name: 'New board', exact: true }).click()
   await page.getByRole('textbox', { name: 'Board name' }).fill('Coffee ideas')
   await page.getByRole('textbox', { name: 'Board name' }).press('Enter')
-  await expect(page.locator('.website-list button')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Add website', exact: true }).click()
-  await expect(page.locator('.website-list button')).toHaveCount(1)
+  await expect(page.locator('.website-shape iframe')).toHaveCount(0)
+  await page.getByTestId('main-menu.button').click()
+  await page.getByRole('menuitem', { name: 'Add website', exact: true }).click()
+  await expect(page.locator('.website-shape iframe')).toHaveCount(1)
   await page.getByRole('button', { name: 'First ideas', exact: true }).click()
-  await expect(page.locator('.website-list button')).toHaveCount(2)
+  await expect(page.locator('.website-shape iframe')).toHaveCount(2)
   await expect
     .poll(() =>
       page.evaluate(
@@ -359,7 +377,12 @@ test('HTML editing, responsive copies, and separate boards survive reload', asyn
                     (record) =>
                       record.typeName === 'page' &&
                       record.name === 'Coffee ideas',
-                  ),
+                  ) &&
+                    records.result.filter(
+                      (record) =>
+                        record.typeName === 'shape' &&
+                        record.type === 'website',
+                    ).length === 3,
                 )
                 db.close()
               }
@@ -373,15 +396,146 @@ test('HTML editing, responsive copies, and separate boards survive reload', asyn
     )
     .toBe(true)
   await page.reload()
-  await expect(page.locator('.website-list button')).toHaveCount(2)
+  await page.getByRole('button', { name: 'First ideas', exact: true }).click()
+  await expect(page.locator('.website-shape iframe')).toHaveCount(2)
   await expect(
     page
-      .frameLocator('iframe[title="Forma · Starting point"]')
+      .locator('iframe[title="Forma · Starting point"]')
+      .first()
+      .contentFrame()
       .getByRole('heading'),
   ).toContainText('Thoughtful spaces.')
   await expect(
     page.getByRole('button', { name: 'Coffee ideas', exact: true }),
   ).toBeVisible()
+})
+
+test('website code and HTML export live in the native context menu', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await expect(
+    page.locator(
+      '.workspace-name, .website-list, .website-actions, .canvas-topbar',
+    ),
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Variation', exact: true }),
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Mobile', exact: true }),
+  ).toHaveCount(0)
+  await openWebsiteMenu(page)
+  await expect(
+    page.getByRole('menuitem', { name: 'View code', exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('menuitem', { name: 'Edit', exact: true }),
+  ).toBeVisible()
+  const downloaded = page.waitForEvent('download')
+  await page
+    .getByRole('menuitem', { name: 'Export as HTML', exact: true })
+    .click()
+  const download = await downloaded
+  expect(download.suggestedFilename()).toBe('forma---starting-point.html')
+  const html = await readFile((await download.path())!, 'utf8')
+  expect(html).toContain('<h1>Good spaces.')
+  expect(html).not.toContain('html-to-image')
+  await page
+    .getByTestId('canvas')
+    .getByText('What if this felt a little more playful?', { exact: true })
+    .click()
+  await page
+    .getByTestId('canvas')
+    .getByText('What if this felt a little more playful?', { exact: true })
+    .click({ button: 'right' })
+  await expect(page.getByTestId('context-menu')).toBeVisible()
+  await expect(
+    page.getByRole('menuitem', { name: 'Export as HTML', exact: true }),
+  ).toHaveCount(0)
+})
+
+test('response failures report their cause and token usage without ending voice', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  gateway.send({ type: 'response-created', responseId: 'limited' })
+  await expect(page.locator('.voice-state')).toContainText('Thinking')
+  gateway.send({
+    type: 'function-call-arguments-delta',
+    responseId: 'limited',
+    itemId: 'item-writing',
+    callId: 'call-writing',
+    delta: '{',
+  })
+  await expect(page.locator('.voice-state')).toContainText('Building')
+  gateway.send({
+    type: 'response-done',
+    responseId: 'limited',
+    status: 'incomplete',
+    raw: {
+      response: {
+        status_details: { reason: 'max_output_tokens' },
+        usage: { input_tokens: 12000, output_tokens: 32000 },
+        output: [{ arguments: 'PRIVATE HTML SHOULD NOT BE LOGGED' }],
+      },
+    },
+  })
+  await expect(page.locator('.voice-notice')).toContainText('output limit')
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+  const diagnostic = await page.evaluate(() =>
+    localStorage.getItem('margin-voice-diagnostics'),
+  )
+  expect(JSON.parse(diagnostic!)[0]).toMatchObject({
+    status: 'incomplete',
+    reason: 'max_output_tokens',
+    inputTokens: 12000,
+    outputTokens: 32000,
+  })
+  expect(diagnostic).not.toContain('PRIVATE HTML')
+  gateway.send({ type: 'speech-started' })
+  gateway.send({
+    type: 'response-done',
+    responseId: 'context-full',
+    status: 'failed',
+    raw: {
+      response: {
+        status_details: { error: { code: 'context_length_exceeded' } },
+      },
+    },
+  })
+  await expect(page.locator('.voice-notice')).toContainText('context limit')
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+})
+
+test('a silent response shows a waiting notice and clears it when progress resumes', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  await page.clock.install()
+  gateway.send({ type: 'speech-stopped' })
+  await expect(page.locator('.voice-state')).toContainText('Thinking')
+  await page.clock.fastForward(50000)
+  await expect(page.locator('.voice-notice')).toContainText('Still waiting')
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+  gateway.send({ type: 'response-created', responseId: 'resumed' })
+  await expect(page.locator('.voice-notice')).toHaveCount(0)
+  gateway.send({
+    type: 'response-done',
+    responseId: 'resumed',
+    status: 'completed',
+  })
+  await expect(page.locator('.voice-state')).toContainText('Listening')
 })
 
 test('known shapes remain editable when the visible board and selection change', async ({
@@ -391,7 +545,8 @@ test('known shapes remain editable when the visible board and selection change',
   await openWorkspace(page)
   await connectVoice(page)
   const original = await gateway.call('read_board', {})
-  const website = original.shapes.find((shape: any) => shape.type === 'website')
+  const target = original.shapes.find((shape: any) => shape.type === 'website')
+  const website = (await gateway.call('read_shapes', { ids: [target.id] }))[0]
   await page.getByRole('button', { name: 'New board', exact: true }).click()
   const current = await gateway.call('read_board', {})
   expect(current.selectedIds).toEqual([])
@@ -489,7 +644,9 @@ test('HTML over 60k edits and persists without selection, hashes, or a page toke
   await connectVoice(page)
   const board = await gateway.call('read_board', {})
   expect(board.selectedIds).toEqual([])
-  const website = board.shapes.find((shape: any) => shape.type === 'website')
+  const target = board.shapes.find((shape: any) => shape.type === 'website')
+  expect(target.props.html).toBeUndefined()
+  const website = (await gateway.call('read_shapes', { ids: [target.id] }))[0]
   expect(website.props.html).toContain('Good spaces.')
   expect(website.contentHash).toBeUndefined()
   const html = website.props.html
@@ -547,43 +704,40 @@ test('HTML over 60k edits and persists without selection, hashes, or a page toke
   ).toHaveCount(0)
 })
 
-test('live context supplies HTML and follows empty, note, and frame selections', async ({
+test('canvas context is retrieved on demand and never injected into voice', async ({
   page,
 }) => {
   const gateway = await mockGateway(page)
   await openWorkspace(page)
   await connectVoice(page)
-  const latestContext = () => {
-    const messages = gateway.sent.filter(
+  await expect
+    .poll(() =>
+      gateway.sent.some((event) => event.type === 'input-audio-append'),
+    )
+    .toBe(true)
+  const injectedMessages = () =>
+    gateway.sent.filter(
       (event: any) =>
         event.type === 'conversation-item-create' &&
-        event.item?.text?.startsWith('[Board context'),
-    ) as any[]
-    const text = messages.at(-1)?.item.text
-    return text ? JSON.parse(text.slice(text.indexOf('\n') + 1)) : null
-  }
-  await expect
-    .poll(() => latestContext()?.selectedWebsiteIds)
-    .toEqual(['shape:forma'])
-  expect(
-    latestContext().shapes.find((shape: any) => shape.id === 'shape:forma')
-      .props.html,
-  ).toContain('Good spaces.')
-  expect(latestContext().visibleShapeIds).toContain('shape:forma')
-  const note = latestContext().shapes.find(
-    (shape: any) => shape.type === 'note',
-  )
+        event.item?.type === 'text-message',
+    )
+  expect(injectedMessages()).toEqual([])
+  const initial = await gateway.call('read_board', {})
+  expect(initial.selectedWebsiteIds).toEqual(['shape:forma'])
+  expect(initial.visibleShapeIds).toContain('shape:forma')
+  expect(JSON.stringify(initial)).not.toContain('Good spaces.')
+  const note = initial.shapes.find((shape: any) => shape.type === 'note')
   await page
     .getByTestId('canvas')
     .getByText('What if this felt a little more playful?', { exact: true })
     .click()
-  await expect.poll(() => latestContext()?.selectedIds).toEqual([note.id])
+  expect((await gateway.call('read_board', {})).selectedIds).toEqual([note.id])
   await page.keyboard.press('Escape')
-  await expect.poll(() => latestContext()?.selectedIds).toEqual([])
-  expect(
-    latestContext().shapes.find((shape: any) => shape.id === 'shape:forma')
-      .props.html,
-  ).toContain('Good spaces.')
+  expect((await gateway.call('read_board', {})).selectedIds).toEqual([])
+  const website = (
+    await gateway.call('read_shapes', { ids: ['shape:forma'] })
+  )[0]
+  expect(website.props.html).toContain('Good spaces.')
   await gateway.call('apply_actions', {
     actions: [
       {
@@ -600,14 +754,30 @@ test('live context supplies HTML and follows empty, note, and frame selections',
       { op: 'select', ids: ['shape:frame-context'] },
     ],
   })
-  await expect
-    .poll(() => latestContext()?.selectedIds)
-    .toEqual(['shape:frame-context'])
-  expect(latestContext().selectedWebsiteIds).toEqual(['shape:forma'])
+  const frame = await gateway.call('read_board', {})
+  expect(frame.selectedIds).toEqual(['shape:frame-context'])
+  expect(frame.selectedWebsiteIds).toEqual(['shape:forma'])
+  await gateway.call('edit_html', {
+    id: 'shape:forma',
+    replacements: [{ search: 'Good spaces.', replace: 'Great.' }],
+  })
   expect(
-    latestContext().shapes.find((shape: any) => shape.id === 'shape:forma')
-      .props.html,
-  ).toContain('Good spaces.')
+    (await gateway.call('read_shapes', { ids: ['shape:forma'] }))[0].props.html,
+  ).toContain('Great.')
+  await gateway.call('apply_actions', {
+    actions: [{ op: 'delete', ids: [note.id] }],
+  })
+  expect(
+    (await gateway.call('read_board', {})).shapes.some(
+      (shape: any) => shape.id === note.id,
+    ),
+  ).toBe(false)
+  await page.getByRole('button', { name: 'New board', exact: true }).click()
+  expect((await gateway.call('read_board', {})).shapes).toEqual([])
+  await page.clock.install()
+  gateway.send({ type: 'speech-started' })
+  await page.clock.fastForward(1000)
+  expect(injectedMessages()).toEqual([])
 })
 
 test('native validation failures roll back a batch without losing earlier edits', async ({
@@ -615,7 +785,7 @@ test('native validation failures roll back a batch without losing earlier edits'
 }) => {
   const gateway = await mockGateway(page)
   await openWorkspace(page)
-  await page.getByRole('button', { name: 'Code', exact: true }).click()
+  await openCode(page)
   const source = page.getByRole('textbox', { name: 'Website HTML' })
   await source.fill(
     (await source.inputValue()).replace('Good spaces.', 'My own copy.'),
@@ -791,7 +961,7 @@ test('websites run scripts but cannot read the editor document', async ({
   page,
 }) => {
   await openWorkspace(page)
-  await page.getByRole('button', { name: 'Code', exact: true }).click()
+  await openCode(page)
   await page
     .getByRole('textbox', { name: 'Website HTML' })
     .fill(

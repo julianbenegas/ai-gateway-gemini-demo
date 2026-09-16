@@ -34,7 +34,7 @@ function describeShape(editor: Editor, shape: TLShape, includeHtml: boolean) {
   }
 }
 
-export function readBoard(editor: Editor, { includeHtml = true } = {}) {
+export function readBoard(editor: Editor) {
   const shapes = editor.getCurrentPageShapes()
   const selectedIds = editor.getSelectedShapeIds()
   const viewport = editor.getViewportPageBounds()
@@ -63,7 +63,7 @@ export function readBoard(editor: Editor, { includeHtml = true } = {}) {
       .map((shape) => shape.id),
     viewport: viewport.toJson(),
     pointer: editor.inputs.getCurrentPagePoint(),
-    shapes: shapes.map((shape) => describeShape(editor, shape, includeHtml)),
+    shapes: shapes.map((shape) => describeShape(editor, shape, false)),
   }
 }
 
@@ -279,7 +279,7 @@ export async function executeCanvasTool(
       return editHtml(editor, args)
     case 'inspect_canvas': {
       const { question } = inspectSchema.parse(args)
-      const context = readBoard(editor, { includeHtml: false })
+      const context = readBoard(editor)
       const captured = await captureCanvas(editor)
       if (!captured)
         return { observation: 'The current viewport is empty.', context }

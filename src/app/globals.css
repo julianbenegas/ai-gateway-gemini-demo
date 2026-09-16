@@ -119,36 +119,8 @@ button {
   height: 15px;
   align-self: end;
 }
-.workspace-name {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px;
-  margin: 33px 3px 30px;
-  font-size: 11px;
-  background: #111;
-}
-.workspace-name small {
-  display: block;
-  color: #777;
-  font-size: 10px;
-  margin-top: 5px;
-}
-.workspace-avatar {
-  width: 29px;
-  height: 29px;
-  display: grid;
-  place-content: center;
-  background: linear-gradient(140deg, #2d2d2d, #171717);
-  border: 1px solid #333;
-  color: #bbb;
-  border-radius: 5px;
-  font-family: var(--font-code);
-  font-size: 12px;
-}
 .sidebar-heading {
+  margin-top: 38px;
   padding: 0 12px;
   display: flex;
   justify-content: space-between;
@@ -175,7 +147,8 @@ button {
   flex-direction: column;
   gap: 3px;
   margin-top: 7px;
-  max-height: 25vh;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 .board-list button {
@@ -209,94 +182,6 @@ button {
   margin-left: auto;
   flex-shrink: 0;
 }
-.designs-heading {
-  margin-top: 30px;
-}
-.count {
-  font-family: var(--font-code);
-  font-size: 10px;
-  color: #666;
-}
-.website-list {
-  padding-top: 7px;
-  overflow: auto;
-  max-height: 35vh;
-}
-.website-list button {
-  padding: 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  text-align: left;
-  border-radius: 5px;
-  font-size: 11px;
-  color: #999;
-}
-.website-list button.selected {
-  background: #151515;
-  color: #ddd;
-}
-.website-list button:hover {
-  background: #1b1b1b;
-}
-.website-list button > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.website-list small {
-  display: block;
-  color: #888;
-  font-family: var(--font-code);
-  font-size: 9px;
-  margin-top: 5px;
-}
-.add-website-sidebar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 13px 12px;
-  font-size: 11px;
-  color: #777;
-}
-.add-website-sidebar:hover {
-  color: #ededed;
-}
-.no-websites {
-  font-size: 11px;
-  line-height: 1.7;
-  color: #777;
-  padding: 0 12px;
-}
-.sidebar-bottom {
-  margin-top: auto;
-  padding: 20px 12px 0;
-}
-.local-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  color: #666;
-  margin-bottom: 17px;
-}
-.sidebar-bottom > button {
-  width: 100%;
-  padding-top: 17px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 10px;
-  color: #888;
-}
-.sidebar-bottom > button:hover {
-  color: #ededed;
-}
-.sidebar-bottom > button svg:last-child {
-  margin-left: auto;
-}
 .topbar {
   height: var(--topbar-height);
   position: absolute;
@@ -311,27 +196,15 @@ button {
   border-bottom: 1px solid var(--border);
   z-index: 6;
 }
-.breadcrumbs {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  font-size: 12px;
-  color: #666;
-  min-width: 0;
-}
-.breadcrumbs input {
+.board-name {
   background: transparent;
   border: 0;
+  min-width: 0;
   width: 190px;
   color: #ededed;
   font-size: 12px;
   text-overflow: ellipsis;
   padding: 5px;
-}
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 .secondary-button,
 .primary-button {
@@ -382,93 +255,11 @@ button {
   background-image: radial-gradient(#2c2c2c 0.65px, transparent 0.65px);
   background-size: 22px 22px;
 }
-.canvas-container .tlui-layout__top {
-  padding-top: 56px;
-}
-.canvas-container .tlui-layout__bottom {
-  padding-bottom: 30px;
-}
-.canvas-topbar {
-  position: absolute;
-  top: var(--topbar-height);
-  height: 45px;
-  left: var(--sidebar-width);
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 24px;
-  z-index: 4;
-  background: #101010f2;
-  border-bottom: 1px solid #202020;
-}
-.canvas-mode {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  font-family: var(--font-code);
-  font-size: 9px;
-  letter-spacing: 1px;
-  color: #999;
-}
-.canvas-mode-dot {
-  width: 4px;
-  height: 4px;
-  background: #777;
-  border-radius: 50%;
-}
-.canvas-hint {
-  font-size: 11px;
-  color: #777;
-}
-.canvas-topbar > .icon-button {
-  margin-left: auto;
-  color: #777;
-}
-.website-actions {
-  width: max-content;
-  margin-left: auto;
-  display: flex;
-  gap: 3px;
-  align-items: center;
-}
-.website-actions + .icon-button {
-  margin-left: 0;
-}
-.website-actions button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 31px;
-  padding: 0 9px;
-  border-radius: 4px;
-  font-size: 11px;
-  color: #aaa;
-}
-.website-actions button:hover,
-.website-actions button.active {
-  background: #2a2a2a;
-  color: #fff;
-}
 .divider {
   height: 17px;
   width: 1px;
   background: #333;
   flex-shrink: 0;
-}
-.canvas-footnote {
-  position: absolute;
-  bottom: 11px;
-  left: var(--sidebar-width);
-  right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  pointer-events: none;
-  font-size: 9px;
-  color: #666;
-  z-index: 3;
 }
 .website-shape {
   position: relative;
@@ -703,116 +494,62 @@ button {
     box-shadow: 0 0 0 4px #ffffff18;
   }
 }
-@media (max-width: 1100px) {
-  .app-shell {
-    --sidebar-width: 192px;
-  }
-  .workspace-name {
-    font-size: 10px;
-  }
-  .breadcrumbs input {
-    width: 150px;
-  }
-  .topbar {
-    padding: 0 18px;
-  }
-  .topbar-actions {
-    gap: 8px;
-  }
-  .canvas-hint {
-    display: none;
-  }
-}
 @media (max-width: 800px) {
   .app-shell {
-    --sidebar-width: 64px;
+    --sidebar-width: 170px;
   }
   .sidebar {
-    padding: 22px 8px;
-  }
-  .brand {
-    font-size: 0;
-    padding: 0;
-    justify-content: center;
-  }
-  .brand-symbol {
-    margin: 0;
-  }
-  .workspace-name,
-  .sidebar-heading,
-  .board-list span,
-  .website-list button > span,
-  .add-website-sidebar,
-  .sidebar-bottom,
-  .no-websites {
-    display: none;
-  }
-  .board-list {
-    margin-top: 35px;
-  }
-  .board-list button,
-  .website-list button {
-    justify-content: center;
-  }
-  .website-list {
-    margin-top: 30px;
+    padding: 24px 10px;
   }
   .topbar {
-    padding: 0 12px;
-  }
-  .breadcrumbs {
-    gap: 6px;
-  }
-  .breadcrumbs > span,
-  .breadcrumbs > svg:first-child {
-    display: none;
-  }
-  .breadcrumbs input {
-    width: 130px;
-  }
-  .website-actions {
-    flex-shrink: 0;
-  }
-  .website-actions button {
-    padding: 0 7px;
-  }
-  .canvas-topbar {
-    padding: 0 18px;
+    padding: 0 16px;
   }
 }
 @media (max-width: 550px) {
   .app-shell {
     --sidebar-width: 0px;
-    --topbar-height: 57px;
+    --topbar-height: 104px;
+  }
+  .topbar {
+    height: 60px;
+    padding: 0 12px;
+    gap: 8px;
+  }
+  .board-name {
+    width: 120px;
   }
   .sidebar {
+    top: 60px;
+    bottom: auto;
+    height: 44px;
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand,
+  .sidebar-heading > span,
+  .active-dot {
     display: none;
   }
-  .breadcrumbs > svg {
+  .sidebar-heading {
+    margin-top: 0;
+    padding: 0 4px;
+    order: 1;
+  }
+  .board-list {
+    flex-direction: row;
+    margin: 0;
+    gap: 4px;
+  }
+  .board-list button {
+    padding: 8px;
+    flex-shrink: 0;
+  }
+  .board-list button > svg {
     display: none;
-  }
-  .breadcrumbs input {
-    width: 105px;
-    font-size: 11px;
-    padding-left: 0;
-  }
-  .topbar-actions {
-    gap: 7px;
-  }
-  .secondary-button.add-website-top {
-    width: 30px;
-    padding: 0;
-    font-size: 0;
-    gap: 0;
-  }
-  .voice-start {
-    font-size: 11px;
-    padding: 0 10px;
-    height: 31px;
-  }
-  .voice-controls {
-    height: 33px;
-    padding-left: 9px;
   }
   .voice-state {
     min-width: 58px;
@@ -820,23 +557,11 @@ button {
     font-size: 10px;
     gap: 6px;
   }
+  .voice-controls {
+    padding-left: 9px;
+  }
   .voice-controls .icon-button {
     width: 25px;
-  }
-  .website-actions button > span {
-    display: none;
-  }
-  .website-actions button {
-    padding: 0 8px;
-  }
-  .canvas-footnote {
-    font-size: 8px;
-  }
-  .canvas-footnote svg {
-    display: none;
-  }
-  .canvas-container .tlui-layout__top {
-    padding-top: 55px;
   }
   .source-dialog {
     width: 96vw;
@@ -849,9 +574,6 @@ button {
   }
   .source-dialog > textarea {
     padding: 14px;
-  }
-  .voice-notice {
-    top: 45px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

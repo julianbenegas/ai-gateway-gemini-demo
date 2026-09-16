@@ -12,12 +12,18 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { type Editor, useValue } from 'tldraw'
+import type { Editor } from 'tldraw'
 import { LIVE_MODEL } from '@/lib/config'
 import { sessionConfig } from '@/lib/realtime-config'
-import { executeCanvasTool, readBoard } from '@/lib/canvas-agent'
+import { executeCanvasTool } from '@/lib/canvas-agent'
+import {
+  recordVoiceResponse,
+  voiceResponseError,
+} from '@/lib/voice-diagnostics'
 
 const model = gateway.experimental_realtime(LIVE_MODEL)
+const waitingMessage =
+  'Still waiting for the voice service. You can keep talking or restart voice.'
 const labels: Record<string, string> = {
   read_board: 'Looking at your board',
   read_shapes: 'Reading the design',
@@ -35,6 +41,10 @@ export function VoiceSession({ editor }: { editor: Editor }) {
   const [error, setError] = useState<string | null>(null)
   const [requestingMic, setRequestingMic] = useState(false)
   const [activity, setActivity] = useState<Activity | null>(null)
+  const [responseState, setResponseState] = useState<
+    'idle' | 'thinking' | 'writing'
+  >('idle')
+  const lastProgress = useRef(0)
   const stream = useRef<MediaStream | null>(null)
   const epoch = useRef(0)
   const mounted = useRef(true)
@@ -48,18 +58,6 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     >(),
   )
   const retriedTool = useRef(false)
-  const lastContext = useRef<string | null>(null)
-  const attention = useValue(
-    'voice attention',
-    () =>
-      JSON.stringify([
-        editor.getCurrentPageId(),
-        editor.getSelectedShapeIds(),
-        editor.getEditingShapeId(),
-        editor.getHoveredShapeId(),
-      ]),
-    [editor],
-  )
 
   const releaseMicrophone = useCallback(() => {
     stream.current?.getTracks().forEach((track) => track.stop())
@@ -72,12 +70,37 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     sessionConfig,
     onEvent: (event) => {
       if (ending.current || !mounted.current) return
+      if (
+        [
+          'response-created',
+          'response-done',
+          'function-call-arguments-delta',
+          'audio-delta',
+          'text-delta',
+        ].includes(event.type)
+      ) {
+        setError((previous) => (previous === waitingMessage ? null : previous))
+      }
       if (event.type === 'speech-started') {
+        setError(null)
+        setResponseState('idle')
         retriedTool.current = false
         for (const response of toolResponses.current.values())
           response.interrupted = true
-        void sendContext().catch(() => {})
       }
+      if (
+        event.type === 'speech-stopped' ||
+        event.type === 'response-created'
+      ) {
+        lastProgress.current = Date.now()
+        setResponseState('thinking')
+      }
+      if (event.type === 'function-call-arguments-delta') {
+        lastProgress.current = Date.now()
+        setResponseState('writing')
+      }
+      if (event.type === 'audio-delta' || event.type === 'text-delta')
+        lastProgress.current = Date.now()
       if (
         event.type === 'response-created' ||
         event.type === 'function-call-arguments-done'
@@ -106,17 +129,34 @@ export function VoiceSession({ editor }: { editor: Editor }) {
         }
       }
       if (event.type === 'response-done') {
+        lastProgress.current = Date.now()
+        setResponseState('idle')
         const response = toolResponses.current.get(event.responseId)
         toolResponses.current.delete(event.responseId)
-        if (!response?.invalid) return
-        const raw = event.raw as {
-          response?: { status_details?: { reason?: string } }
+        const details = recordVoiceResponse(
+          event.responseId,
+          event.status,
+          event.raw,
+        )
+        if (
+          response?.valid &&
+          !response.interrupted &&
+          event.status !== 'cancelled'
+        )
+          setResponseState('thinking')
+        if (
+          event.status === 'failed' ||
+          (event.status === 'incomplete' && !response?.invalid)
+        ) {
+          setResponseState('idle')
+          setError(
+            voiceResponseError(
+              event.status,
+              details.errorCode ?? details.reason,
+            ),
+          )
         }
-        console.warn('Realtime tool response did not parse', {
-          responseId: event.responseId,
-          status: event.status,
-          reason: raw?.response?.status_details?.reason,
-        })
+        if (!response?.invalid) return
         if (
           response.valid ||
           response.interrupted ||
@@ -128,6 +168,7 @@ export function VoiceSession({ editor }: { editor: Editor }) {
           (event.status === 'completed' || event.status === 'incomplete')
         ) {
           retriedTool.current = true
+          setResponseState('thinking')
           realtime.requestResponse()
         } else {
           setActivity({
@@ -195,7 +236,6 @@ export function VoiceSession({ editor }: { editor: Editor }) {
 
   const {
     status,
-    sendEvent,
     startAudioCapture,
     stopAudioCapture,
     disconnect,
@@ -203,66 +243,25 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     resumePlayback,
   } = realtime
 
-  const sendContext = useCallback(async () => {
-    if (ending.current) return
-    const context = JSON.stringify(readBoard(editor))
-    if (context === lastContext.current) return
-    lastContext.current = context
+  useEffect(() => {
+    if (status !== 'connected' || responseState === 'idle') return
+    const timer = setInterval(() => {
+      if (Date.now() - lastProgress.current < 45000) return
+      setError(waitingMessage)
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [status, responseState])
+
+  useEffect(() => {
+    if (status !== 'connected') return
     try {
-      await sendEvent({
-        type: 'conversation-item-create',
-        item: {
-          type: 'text-message',
-          role: 'user',
-          text: `[Board context update; do not respond to this alone]\n${context}`,
-        },
-      })
+      if (!ending.current && stream.current) startAudioCapture(stream.current)
     } catch (error) {
-      if (lastContext.current === context) lastContext.current = null
-      if (!ending.current && mounted.current) setError(String(error))
-      throw error
+      releaseMicrophone()
+      setError(String(error))
+      disconnect()
     }
-  }, [editor, sendEvent])
-
-  useEffect(() => {
-    if (status !== 'connected') return
-    let current = true
-    void sendContext()
-      .then(() => {
-        if (current && !ending.current && stream.current)
-          startAudioCapture(stream.current)
-      })
-      .catch((error) => {
-        releaseMicrophone()
-        setError(String(error))
-        disconnect()
-      })
-    return () => {
-      current = false
-    }
-  }, [status, sendContext, startAudioCapture, releaseMicrophone, disconnect])
-
-  useEffect(() => {
-    if (status === 'connected') void sendContext().catch(() => {})
-  }, [attention, status, sendContext])
-
-  useEffect(() => {
-    if (status !== 'connected') return
-    let timer: ReturnType<typeof setTimeout>
-    const changed = () => {
-      clearTimeout(timer)
-      timer = setTimeout(() => {
-        void sendContext().catch(() => {})
-      }, 400)
-    }
-    const stopDocument = editor.store.listen(changed, { scope: 'document' })
-    const stopSession = editor.store.listen(changed, { scope: 'session' })
-    return () => {
-      clearTimeout(timer)
-      stopDocument()
-      stopSession()
-    }
-  }, [editor, status, sendContext])
+  }, [status, startAudioCapture, releaseMicrophone, disconnect])
 
   useEffect(() => {
     const onCrash = () => {
@@ -310,6 +309,7 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     if (requestingMic || status === 'connecting') return
     const currentEpoch = ++epoch.current
     setError(null)
+    setResponseState('idle')
     setRequestingMic(true)
     try {
       const media = await navigator.mediaDevices.getUserMedia({
@@ -334,7 +334,6 @@ export function VoiceSession({ editor }: { editor: Editor }) {
         calls.current.clear()
         toolResponses.current.clear()
         retriedTool.current = false
-        lastContext.current = null
         setActivity(null)
         await connect({ capture: false })
       }
@@ -354,6 +353,7 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     abort.current.abort()
     setRequestingMic(false)
     setActivity(null)
+    setResponseState('idle')
     releaseMicrophone()
     disconnect()
   }
@@ -369,11 +369,15 @@ export function VoiceSession({ editor }: { editor: Editor }) {
   const busy = requestingMic || status === 'connecting'
   const state = realtime.isPlaying
     ? 'Speaking'
-    : activity?.state === 'running'
-      ? 'Working'
-      : realtime.isCapturing
-        ? 'Listening'
-        : 'Muted'
+    : responseState === 'writing'
+      ? 'Building'
+      : responseState === 'thinking'
+        ? 'Thinking'
+        : activity?.state === 'running'
+          ? 'Working'
+          : realtime.isCapturing
+            ? 'Listening'
+            : 'Muted'
 
   return (
     <div className="voice-session">
@@ -425,7 +429,7 @@ export function VoiceSession({ editor }: { editor: Editor }) {
         <button
           className="voice-start"
           onClick={() => void start()}
-          title="Talk to GPT Realtime 2. Your microphone and board context are shared during the session."
+          title="Talk to GPT Realtime 2. The agent can read your board and website source through its tools."
         >
           <AudioLines size={16} />
           Start voice
