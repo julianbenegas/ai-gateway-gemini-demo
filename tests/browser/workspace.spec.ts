@@ -19,7 +19,7 @@ test('API origin checks accept the browser host and reject other origins', async
 async function openWorkspace(page: Page) {
   await page.goto('/')
   await expect(
-    page.getByRole('button', { name: 'Start live session', exact: true }),
+    page.getByRole('button', { name: 'Start voice', exact: true }),
   ).toBeVisible()
   await expect(
     page
@@ -77,13 +77,10 @@ async function mockGateway(page: Page) {
   }
 }
 
-async function connectText(page: Page) {
-  await page
-    .getByRole('textbox', { name: 'Message your design partner' })
-    .fill('Let’s work on this design.')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+async function connectVoice(page: Page) {
+  await page.getByRole('button', { name: 'Start voice', exact: true }).click()
   await expect(
-    page.getByRole('button', { name: 'End session', exact: true }),
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
 }
 
@@ -162,7 +159,7 @@ test('agent edits enforce fresh HTML, roll back failed batches, and reject the w
 }) => {
   const gateway = await mockGateway(page)
   await openWorkspace(page)
-  await connectText(page)
+  await connectVoice(page)
   const board = await gateway.call('read_board', {})
   const shapes = await gateway.call('read_shapes', { ids: ['shape:forma'] })
   const shape = shapes[0]
@@ -245,7 +242,7 @@ test('visual inspection includes iframe pixels and canvas annotations', async ({
     })
   })
   await openWorkspace(page)
-  await connectText(page)
+  await connectVoice(page)
   const websiteBounds = (await page
     .locator('iframe[title="Forma · Starting point"]')
     .boundingBox())!
@@ -277,7 +274,7 @@ test('visual inspection includes iframe pixels and canvas annotations', async ({
   )
 })
 
-test('microphone capture starts after readiness and stops when session ends', async ({
+test('microphone uses GPT audio settings, mutes, resumes, and stops on end', async ({
   page,
 }) => {
   const gateway = await mockGateway(page)
@@ -292,9 +289,7 @@ test('microphone capture starts after readiness and stops when session ends', as
     }
   })
   await openWorkspace(page)
-  await page
-    .getByRole('button', { name: 'Start live session', exact: true })
-    .click()
+  await page.getByRole('button', { name: 'Start voice', exact: true }).click()
   await expect(
     page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
@@ -303,9 +298,40 @@ test('microphone capture starts after readiness and stops when session ends', as
       gateway.sent.some((event) => event.type === 'input-audio-append'),
     )
     .toBe(true)
-  await page.getByRole('button', { name: 'End session', exact: true }).click()
+  const configuration = gateway.sent.find(
+    (event) => event.type === 'session-update',
+  )!.config as any
+  expect(configuration.inputAudioFormat).toEqual({
+    type: 'audio/pcm',
+    rate: 24000,
+  })
+  expect(configuration.outputAudioFormat).toEqual({
+    type: 'audio/pcm',
+    rate: 24000,
+  })
+  expect(configuration.voice).toBe('marin')
+  expect(configuration.inputAudioTranscription).toBeUndefined()
+  await page
+    .getByRole('button', { name: 'Mute microphone', exact: true })
+    .click()
+  expect(
+    await page.evaluate(() =>
+      (window as any).testStream
+        .getTracks()
+        .every((track: MediaStreamTrack) => track.readyState === 'ended'),
+    ),
+  ).toBe(true)
+  await page
+    .getByRole('button', { name: 'Unmute microphone', exact: true })
+    .click()
   await expect(
-    page.getByRole('button', { name: 'Start live session', exact: true }),
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'End voice session', exact: true })
+    .click()
+  await expect(
+    page.getByRole('button', { name: 'Start voice', exact: true }),
   ).toBeVisible()
   expect(
     await page.evaluate(() =>
@@ -314,6 +340,64 @@ test('microphone capture starts after readiness and stops when session ends', as
         .every((track: MediaStreamTrack) => track.readyState === 'ended'),
     ),
   ).toBe(true)
+})
+
+test('agent interaction is voice only and has no conversation panel', async ({
+  page,
+}) => {
+  await mockGateway(page)
+  await openWorkspace(page)
+  await expect(
+    page.getByRole('textbox', { name: 'Message your design partner' }),
+  ).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Send message' })).toHaveCount(
+    0,
+  )
+  await expect(
+    page.locator('.agent-panel, .conversation, .composer'),
+  ).toHaveCount(0)
+  await connectVoice(page)
+  await expect(page.locator('.voice-state')).toContainText('Listening')
+  await expect(page.locator('.canvas-container')).toHaveCSS('right', '0px')
+})
+
+test('cancelling a pending microphone request stops late audio without connecting', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await page.addInitScript(() => {
+    const acquire = navigator.mediaDevices.getUserMedia.bind(
+      navigator.mediaDevices,
+    )
+    navigator.mediaDevices.getUserMedia = (options) =>
+      new Promise((resolve) => {
+        ;(window as any).allowTestMicrophone = async () => {
+          const stream = await acquire(options)
+          ;(window as any).testStream = stream
+          resolve(stream)
+        }
+      })
+  })
+  await openWorkspace(page)
+  await page.getByRole('button', { name: 'Start voice', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Cancel voice connection' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel voice connection' }).click()
+  await page.evaluate(() => (window as any).allowTestMicrophone())
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).testStream
+          .getTracks()
+          .every((track: MediaStreamTrack) => track.readyState === 'ended'),
+      ),
+    )
+    .toBe(true)
+  await expect(
+    page.getByRole('button', { name: 'Start voice', exact: true }),
+  ).toBeVisible()
+  expect(gateway.sent).toHaveLength(0)
 })
 
 test('websites run scripts but cannot read the editor document', async ({
@@ -344,12 +428,11 @@ test('a failed Gateway connection leaves an actionable error and allows retry', 
     }),
   )
   await openWorkspace(page)
-  await page
-    .getByRole('textbox', { name: 'Message your design partner' })
-    .fill('Hello')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await expect(page.locator('.error-message')).toContainText('Vercel project')
+  await page.getByRole('button', { name: 'Start voice', exact: true }).click()
+  await expect(page.locator('.voice-notice.is-error')).toContainText(
+    'AI Gateway',
+  )
   await expect(
-    page.getByRole('button', { name: 'Start live session', exact: true }),
+    page.getByRole('button', { name: 'Start voice', exact: true }),
   ).toBeEnabled()
 })

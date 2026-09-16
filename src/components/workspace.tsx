@@ -5,7 +5,6 @@ import { getAssetUrls } from '@tldraw/assets/selfHosted'
 import {
   ArrowDownToLine,
   ArrowUpRight,
-  AudioLines,
   Check,
   ChevronRight,
   Code2,
@@ -17,8 +16,6 @@ import {
   Maximize,
   Monitor,
   MousePointer2,
-  PanelRightClose,
-  PanelRightOpen,
   Pencil,
   Plus,
   Smartphone,
@@ -36,10 +33,11 @@ import {
   useEditor,
   useValue,
 } from 'tldraw'
-import { AgentPanel } from './agent-panel'
+import { VoiceSession } from './voice-session'
 import { SourceEditor } from './source-editor'
 import { WebsiteShapeUtil, type WebsiteShape } from './website-shape'
 import { BLANK_HTML, STARTER_HTML } from '@/lib/content'
+import { focusCanvas } from '@/lib/canvas-agent'
 import { STORAGE_KEY, TLDRAW_LICENSE_KEY } from '@/lib/config'
 
 const shapeUtils = [WebsiteShapeUtil]
@@ -94,15 +92,11 @@ function EditorChrome({ editor }: { editor: Editor }) {
     editor,
   ])
   const [source, setSource] = useState<WebsiteShape | null>(null)
-  const [agentOpen, setAgentOpen] = useState(true)
 
   const focus = (shape: WebsiteShape) => {
     editor.setCurrentTool('select')
     editor.select(shape.id)
-    editor.zoomToBounds(editor.getShapePageBounds(shape)!, {
-      animation: { duration: 250 },
-      inset: 80,
-    })
+    focusCanvas(editor, editor.getShapePageBounds(shape)!)
   }
   const addWebsite = () => {
     const bounds = websites.map((shape) => editor.getShapePageBounds(shape)!)
@@ -149,10 +143,7 @@ function EditorChrome({ editor }: { editor: Editor }) {
       meta: { derivedFromShapeId: selected.id },
     })
     editor.select(id)
-    editor.zoomToBounds(Box.Common([box, editor.getShapePageBounds(id)!]), {
-      animation: { duration: 250 },
-      inset: 65,
-    })
+    focusCanvas(editor, Box.Common([box, editor.getShapePageBounds(id)!]))
   }
 
   return (
@@ -163,16 +154,16 @@ function EditorChrome({ editor }: { editor: Editor }) {
             <i />
             <i />
           </span>
-          margin<span className="brand-period">.</span>
+          margin
         </a>
         <div className="workspace-name">
           <span className="workspace-avatar">M</span>
           <div>
-            Personal workspace<small>A little room for ideas</small>
+            Your workspace<small>Local · Private</small>
           </div>
         </div>
         <div className="sidebar-heading">
-          <span>YOUR BOARDS</span>
+          <span>Boards</span>
           <button
             onClick={newBoard}
             aria-label="New board"
@@ -195,7 +186,7 @@ function EditorChrome({ editor }: { editor: Editor }) {
           ))}
         </nav>
         <div className="sidebar-heading designs-heading">
-          <span>ON THIS BOARD</span>
+          <span>Websites</span>
           <span className="count">{websites.length}</span>
         </div>
         <div className="website-list">
@@ -276,98 +267,82 @@ function EditorChrome({ editor }: { editor: Editor }) {
           >
             <Plus size={14} /> Website
           </button>
-          <button
-            className="icon-button"
-            aria-label={
-              agentOpen ? 'Hide design partner' : 'Show design partner'
-            }
-            onClick={() => setAgentOpen(!agentOpen)}
-          >
-            {agentOpen ? (
-              <PanelRightClose size={18} />
-            ) : (
-              <PanelRightOpen size={18} />
-            )}
-          </button>
+          <VoiceSession editor={editor} />
         </div>
       </header>
-      <div className={`canvas-topbar ${!agentOpen ? 'expanded' : ''}`}>
+      <div className="canvas-topbar">
         <div className="canvas-mode">
           <span className="canvas-mode-dot" />
-          {editing ? 'INTERACTING' : 'DESIGN CANVAS'}
+          {editing ? 'INTERACTING' : 'CANVAS'}
         </div>
         <span className="canvas-hint">
           {editing
             ? 'Click the canvas to return to drawing'
-            : 'A place to think out loud'}
+            : 'Speak an idea. Sketch a direction.'}
         </span>
+        {selected && (
+          <div className="website-actions">
+            <button onClick={() => setSource(selected)}>
+              <Code2 size={14} />
+              <span>Code</span>
+            </button>
+            <span className="divider" />
+            <button onClick={() => duplicate()}>
+              <Copy size={14} />
+              <span>Variation</span>
+            </button>
+            <button onClick={() => duplicate(true)}>
+              <Smartphone size={14} />
+              <span>Mobile</span>
+            </button>
+            <span className="divider" />
+            <button
+              className={editing === selected.id ? 'active' : ''}
+              onClick={() => {
+                editor.setCurrentTool('select')
+                editor.setEditingShape(
+                  editing === selected.id ? null : selected.id,
+                )
+              }}
+            >
+              {editing === selected.id ? (
+                <Pencil size={14} />
+              ) : (
+                <MousePointer2 size={14} />
+              )}
+              <span>{editing === selected.id ? 'Annotate' : 'Interact'}</span>
+            </button>
+            <button
+              aria-label="Download HTML"
+              onClick={() =>
+                download(
+                  `${selected.props.title.replace(/[^a-z0-9-_]/gi, '-').toLowerCase()}.html`,
+                  selected.props.html,
+                  'text/html',
+                )
+              }
+            >
+              <ArrowDownToLine size={14} />
+            </button>
+          </div>
+        )}
         <button
           className="icon-button"
           aria-label="Fit all designs"
-          onClick={() => editor.zoomToFit({ animation: { duration: 220 } })}
+          onClick={() => {
+            const bounds = editor
+              .getCurrentPageShapes()
+              .map((shape) => editor.getShapePageBounds(shape)!)
+            if (bounds.length) focusCanvas(editor, Box.Common(bounds))
+          }}
         >
           <Maximize size={14} />
         </button>
       </div>
-      {selected && (
-        <div className={`website-actions ${!agentOpen ? 'expanded' : ''}`}>
-          <button onClick={() => setSource(selected)}>
-            <Code2 size={14} />
-            <span>Code</span>
-          </button>
-          <span className="divider" />
-          <button onClick={() => duplicate()}>
-            <Copy size={14} />
-            <span>Variation</span>
-          </button>
-          <button onClick={() => duplicate(true)}>
-            <Smartphone size={14} />
-            <span>Mobile</span>
-          </button>
-          <span className="divider" />
-          <button
-            className={editing === selected.id ? 'active' : ''}
-            onClick={() => {
-              editor.setCurrentTool('select')
-              editor.setEditingShape(
-                editing === selected.id ? null : selected.id,
-              )
-            }}
-          >
-            {editing === selected.id ? (
-              <Pencil size={14} />
-            ) : (
-              <MousePointer2 size={14} />
-            )}
-            <span>{editing === selected.id ? 'Annotate' : 'Interact'}</span>
-          </button>
-          <button
-            aria-label="Download HTML"
-            onClick={() =>
-              download(
-                `${selected.props.title.replace(/[^a-z0-9-_]/gi, '-').toLowerCase()}.html`,
-                selected.props.html,
-                'text/html',
-              )
-            }
-          >
-            <ArrowDownToLine size={14} />
-          </button>
-        </div>
-      )}
-      <div className={`canvas-footnote ${!agentOpen ? 'expanded' : ''}`}>
+      <div className="canvas-footnote">
         <Frame size={12} />
         <span>Draw anywhere. Double-click a website to explore it.</span>
       </div>
-      <div className={`agent-container ${!agentOpen ? 'is-hidden' : ''}`}>
-        <AgentPanel editor={editor} />
-      </div>
-      {!agentOpen && (
-        <button className="reopen-agent" onClick={() => setAgentOpen(true)}>
-          <AudioLines size={18} /> Design partner
-        </button>
-      )}
-      <style>{`.canvas-container { right: ${agentOpen ? 'var(--agent-width)' : '0px'}; }`}</style>
       {source && (
         <SourceEditor
           editor={editor}
@@ -382,7 +357,7 @@ function EditorChrome({ editor }: { editor: Editor }) {
 export default function Workspace() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const mount = useCallback((editor: Editor) => {
-    editor.user.updateUserPreferences({ colorScheme: 'light' })
+    editor.user.updateUserPreferences({ colorScheme: 'dark' })
     if (
       editor.getPages().length === 1 &&
       editor.getCurrentPageShapes().length === 0 &&
@@ -416,13 +391,13 @@ export default function Workspace() {
         },
       ])
       editor.select(id)
-      editor.zoomToBounds(
+      focusCanvas(
+        editor,
         Box.Common(
           editor
             .getCurrentPageShapes()
             .map((shape) => editor.getShapePageBounds(shape)!),
         ),
-        { inset: 100 },
       )
       editor.clearHistory()
     }

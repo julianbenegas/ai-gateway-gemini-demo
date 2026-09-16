@@ -11,6 +11,13 @@ import { contentHash } from './content'
 import { capturePreview } from './preview'
 import type { WebsiteShape } from '@/components/website-shape'
 
+export function focusCanvas(editor: Editor, bounds: Box) {
+  editor.zoomToBounds(bounds, {
+    animation: { duration: 220 },
+    inset: Math.min(220, editor.getViewportScreenBounds().w / 3),
+  })
+}
+
 export function readBoard(editor: Editor) {
   return {
     pageId: editor.getCurrentPageId(),
@@ -142,10 +149,7 @@ export function applyCanvasActions(editor: Editor, input: unknown) {
             const bounds = requireIds(action.ids).map((id) =>
               editor.getShapePageBounds(id)!,
             )
-            editor.zoomToBounds(Box.Common(bounds), {
-              animation: { duration: 220 },
-              inset: 80,
-            })
+            focusCanvas(editor, Box.Common(bounds))
             break
           }
         }
