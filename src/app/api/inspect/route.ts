@@ -7,7 +7,7 @@ export const maxDuration = 60
 
 const inputSchema = z.object({
   image: z.string().startsWith('data:image/png;base64,').max(3500000),
-  question: z.string().min(1).max(2000),
+  question: z.string(),
   context: z.unknown(),
   warnings: z.array(z.string()).optional(),
 })
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
           content: [
             {
               type: 'text',
-              text: `${input.question}\nBoard: ${JSON.stringify(input.context).slice(0, 80000)}\nCapture warnings: ${JSON.stringify(input.warnings ?? [])}`,
+              text: `${input.question}\nBoard: ${JSON.stringify(input.context)}\nCapture warnings: ${JSON.stringify(input.warnings ?? [])}`,
             },
             { type: 'image', image: input.image },
           ],

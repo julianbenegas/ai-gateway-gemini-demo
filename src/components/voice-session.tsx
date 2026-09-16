@@ -12,7 +12,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import type { Editor } from 'tldraw'
+import { type Editor, useValue } from 'tldraw'
 import { LIVE_MODEL } from '@/lib/config'
 import { sessionConfig } from '@/lib/realtime-config'
 import { executeCanvasTool, readBoard } from '@/lib/canvas-agent'
@@ -40,6 +40,18 @@ export function VoiceSession({ editor }: { editor: Editor }) {
   const ending = useRef(false)
   const abort = useRef(new AbortController())
   const calls = useRef(new Map<string, Promise<unknown>>())
+  const lastContext = useRef<string | null>(null)
+  const attention = useValue(
+    'voice attention',
+    () =>
+      JSON.stringify([
+        editor.getCurrentPageId(),
+        editor.getSelectedShapeIds(),
+        editor.getEditingShapeId(),
+        editor.getHoveredShapeId(),
+      ]),
+    [editor],
+  )
 
   const releaseMicrophone = useCallback(() => {
     stream.current?.getTracks().forEach((track) => track.stop())
@@ -50,6 +62,9 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     model,
     api: { token: '/api/realtime' },
     sessionConfig,
+    onEvent: (event) => {
+      if (event.type === 'speech-started') void sendContext().catch(() => {})
+    },
     onError: (error) => {
       epoch.current++
       ending.current = true
@@ -59,7 +74,7 @@ export function VoiceSession({ editor }: { editor: Editor }) {
       disconnect()
       setError(
         error.message.includes('setup: 503')
-          ? 'Voice could not connect to AI Gateway. Refresh the Vercel development credentials and try again.'
+          ? 'Voice setup failed. Check this deployment’s AI Gateway configuration and try again.'
           : error.message,
       )
     },
@@ -114,18 +129,26 @@ export function VoiceSession({ editor }: { editor: Editor }) {
     resumePlayback,
   } = realtime
 
-  const sendContext = useCallback(
-    () =>
-      sendEvent({
+  const sendContext = useCallback(async () => {
+    if (ending.current) return
+    const context = JSON.stringify(readBoard(editor))
+    if (context === lastContext.current) return
+    lastContext.current = context
+    try {
+      await sendEvent({
         type: 'conversation-item-create',
         item: {
           type: 'text-message',
           role: 'user',
-          text: `[Board context update; do not respond to this alone]\n${JSON.stringify(readBoard(editor))}`,
+          text: `[Board context update; do not respond to this alone]\n${context}`,
         },
-      }),
-    [editor, sendEvent],
-  )
+      })
+    } catch (error) {
+      if (lastContext.current === context) lastContext.current = null
+      if (!ending.current && mounted.current) setError(String(error))
+      throw error
+    }
+  }, [editor, sendEvent])
 
   useEffect(() => {
     if (status !== 'connected') return
@@ -146,13 +169,17 @@ export function VoiceSession({ editor }: { editor: Editor }) {
   }, [status, sendContext, startAudioCapture, releaseMicrophone, disconnect])
 
   useEffect(() => {
+    if (status === 'connected') void sendContext().catch(() => {})
+  }, [attention, status, sendContext])
+
+  useEffect(() => {
     if (status !== 'connected') return
     let timer: ReturnType<typeof setTimeout>
     const changed = () => {
       clearTimeout(timer)
       timer = setTimeout(() => {
-        void sendContext().catch((error) => setError(String(error)))
-      }, 900)
+        void sendContext().catch(() => {})
+      }, 400)
     }
     const stopDocument = editor.store.listen(changed, { scope: 'document' })
     const stopSession = editor.store.listen(changed, { scope: 'session' })
@@ -162,6 +189,25 @@ export function VoiceSession({ editor }: { editor: Editor }) {
       stopSession()
     }
   }, [editor, status, sendContext])
+
+  useEffect(() => {
+    const onCrash = () => {
+      epoch.current++
+      ending.current = true
+      abort.current.abort()
+      releaseMicrophone()
+      disconnect()
+      setActivity(null)
+      setRequestingMic(false)
+      setError(
+        'The canvas encountered an error. Refresh the page to reopen your board.',
+      )
+    }
+    editor.on('crash', onCrash)
+    return () => {
+      editor.off('crash', onCrash)
+    }
+  }, [editor, releaseMicrophone, disconnect])
 
   useEffect(() => {
     if (status !== 'disconnected' && status !== 'error') return
@@ -212,6 +258,7 @@ export function VoiceSession({ editor }: { editor: Editor }) {
         ending.current = false
         abort.current = new AbortController()
         calls.current.clear()
+        lastContext.current = null
         setActivity(null)
         await connect({ capture: false })
       }

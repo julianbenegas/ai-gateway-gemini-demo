@@ -154,77 +154,52 @@ test('HTML editing, responsive copies, and separate boards survive reload', asyn
   ).toBeVisible()
 })
 
-test('agent edits enforce fresh HTML, roll back failed batches, and reject the wrong board', async ({
+test('known shapes remain editable when the visible board and selection change', async ({
   page,
 }) => {
   const gateway = await mockGateway(page)
   await openWorkspace(page)
   await connectVoice(page)
-  const board = await gateway.call('read_board', {})
-  const shapes = await gateway.call('read_shapes', { ids: ['shape:forma'] })
-  const shape = shapes[0]
-  const update = {
-    op: 'update',
-    shape: {
-      id: shape.id,
-      type: 'website',
-      props: {
-        html: shape.props.html.replace('Good spaces.', 'Made by the agent.'),
+  const original = await gateway.call('read_board', {})
+  const website = original.shapes.find((shape: any) => shape.type === 'website')
+  await page.getByRole('button', { name: 'New board', exact: true }).click()
+  const current = await gateway.call('read_board', {})
+  expect(current.selectedIds).toEqual([])
+  const result = await gateway.call('apply_actions', {
+    pageId: original.pageId,
+    actions: [
+      {
+        op: 'update',
+        shape: {
+          id: website.id,
+          props: { html: website.props.html.replace('Good spaces.', 'Great.') },
+        },
       },
-    },
-    expectedContentHash: shape.contentHash,
-  }
-  expect(
-    (
-      await gateway.call('apply_actions', {
-        pageId: board.pageId,
-        actions: [update],
-      })
-    ).ok,
-  ).toBe(true)
+    ],
+  })
+  expect(result.updatedIds).toEqual([website.id])
+  expect(result.pageId).toBe(current.pageId)
+  const records = await gateway.call('read_shapes', { ids: [website.id] })
+  expect(records[0].pageId).toBe(original.pageId)
+  expect(records[0].props.html).toContain('Great.')
+  await page.getByRole('button', { name: 'First ideas', exact: true }).click()
   await expect(
     page
       .frameLocator('iframe[title="Forma · Starting point"]')
       .getByRole('heading'),
-  ).toContainText('Made by the agent.')
-  expect(
-    (
-      await gateway.call('apply_actions', {
-        pageId: board.pageId,
-        actions: [update],
-      })
-    ).error,
-  ).toContain('HTML changed')
-  const failed = await gateway.call('apply_actions', {
-    pageId: board.pageId,
+  ).toContainText('Great.')
+  const missing = await gateway.call('apply_actions', {
     actions: [
-      {
-        op: 'create',
-        shape: {
-          type: 'website',
-          id: 'shape:rollback',
-          x: 900,
-          y: 900,
-          props: { title: 'Must roll back' },
-        },
-      },
-      { op: 'delete', ids: ['shape:missing'] },
+      { op: 'delete', ids: ['shape:gone'] },
+      { op: 'select', ids: [] },
     ],
   })
-  expect(failed.error).toContain('missing')
-  const after = await gateway.call('read_board', {})
-  expect(after.shapes.some((shape: any) => shape.id === 'shape:rollback')).toBe(
-    false,
-  )
-  await page.getByRole('button', { name: 'New board', exact: true }).click()
-  expect(
-    (
-      await gateway.call('apply_actions', {
-        pageId: board.pageId,
-        actions: [update],
-      })
-    ).error,
-  ).toContain('switched boards')
+  expect(missing.missingIds).toEqual(['shape:gone'])
+  expect(missing.deletedIds).toEqual([])
+  expect(missing.selectedIds).toEqual([])
+  await expect(
+    page.getByText('Something went wrong', { exact: true }),
+  ).toHaveCount(0)
 })
 
 test('visual inspection includes iframe pixels and canvas annotations', async ({
@@ -272,6 +247,188 @@ test('visual inspection includes iframe pixels and canvas annotations', async ({
     testInfo.outputPath('captured-board.png'),
     Buffer.from(capture!.image.split(',')[1], 'base64'),
   )
+})
+
+test('HTML over 60k edits and persists without selection, hashes, or a page token', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await page.getByRole('button', { name: 'Select — V', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await connectVoice(page)
+  const board = await gateway.call('read_board', {})
+  expect(board.selectedIds).toEqual([])
+  const website = board.shapes.find((shape: any) => shape.type === 'website')
+  expect(website.props.html).toContain('Good spaces.')
+  expect(website.contentHash).toBeUndefined()
+  const html = website.props.html
+    .replace('Good spaces.', 'Great.')
+    .replace('</head>', '<style>' + ' '.repeat(65000) + '</style></head>')
+  expect(html.length).toBeGreaterThan(60000)
+  const result = await gateway.call('apply_actions', {
+    actions: [
+      { op: 'update', shape: { id: website.id, props: { html } } },
+      ...Array.from({ length: 35 }, () => ({ op: 'select', ids: [] })),
+    ],
+  })
+  expect(result.updatedIds).toEqual([website.id])
+  expect(result.selectedIds).toEqual([])
+  await expect(
+    page
+      .frameLocator('iframe[title="Forma · Starting point"]')
+      .getByRole('heading'),
+  ).toContainText('Great.')
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (expected) =>
+          new Promise<boolean>((resolve, reject) => {
+            const request = indexedDB.open('TLDRAW_DOCUMENT_v2margin-board-v1')
+            request.onerror = () => reject(request.error)
+            request.onsuccess = () => {
+              const db = request.result
+              const record = db
+                .transaction('records')
+                .objectStore('records')
+                .get('shape:forma')
+              record.onsuccess = () => {
+                resolve(record.result?.props.html === expected)
+                db.close()
+              }
+              record.onerror = () => {
+                reject(record.error)
+                db.close()
+              }
+            }
+          }),
+        html,
+      ),
+    )
+    .toBe(true)
+  await page.reload()
+  await expect(
+    page
+      .frameLocator('iframe[title="Forma · Starting point"]')
+      .getByRole('heading'),
+  ).toContainText('Great.')
+  await expect(
+    page.getByText('Something went wrong', { exact: true }),
+  ).toHaveCount(0)
+})
+
+test('live context supplies HTML and follows empty, note, and frame selections', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  const latestContext = () => {
+    const messages = gateway.sent.filter(
+      (event: any) =>
+        event.type === 'conversation-item-create' &&
+        event.item?.text?.startsWith('[Board context'),
+    ) as any[]
+    const text = messages.at(-1)?.item.text
+    return text ? JSON.parse(text.slice(text.indexOf('\n') + 1)) : null
+  }
+  await expect
+    .poll(() => latestContext()?.selectedWebsiteIds)
+    .toEqual(['shape:forma'])
+  expect(
+    latestContext().shapes.find((shape: any) => shape.id === 'shape:forma')
+      .props.html,
+  ).toContain('Good spaces.')
+  expect(latestContext().visibleShapeIds).toContain('shape:forma')
+  const note = latestContext().shapes.find(
+    (shape: any) => shape.type === 'note',
+  )
+  await page
+    .getByTestId('canvas')
+    .getByText('What if this felt a little more playful?', { exact: true })
+    .click()
+  await expect.poll(() => latestContext()?.selectedIds).toEqual([note.id])
+  await page.keyboard.press('Escape')
+  await expect.poll(() => latestContext()?.selectedIds).toEqual([])
+  expect(
+    latestContext().shapes.find((shape: any) => shape.id === 'shape:forma')
+      .props.html,
+  ).toContain('Good spaces.')
+  await gateway.call('apply_actions', {
+    actions: [
+      {
+        op: 'create',
+        shape: {
+          id: 'shape:frame-context',
+          type: 'frame',
+          x: -20,
+          y: -20,
+          props: { w: 760, h: 800, name: 'Design' },
+        },
+      },
+      { op: 'reparent', ids: ['shape:forma'], parentId: 'shape:frame-context' },
+      { op: 'select', ids: ['shape:frame-context'] },
+    ],
+  })
+  await expect
+    .poll(() => latestContext()?.selectedIds)
+    .toEqual(['shape:frame-context'])
+  expect(latestContext().selectedWebsiteIds).toEqual(['shape:forma'])
+  expect(
+    latestContext().shapes.find((shape: any) => shape.id === 'shape:forma')
+      .props.html,
+  ).toContain('Good spaces.')
+})
+
+test('native validation failures roll back a batch without losing earlier edits', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await page.getByRole('button', { name: 'Code', exact: true }).click()
+  const source = page.getByRole('textbox', { name: 'Website HTML' })
+  await source.fill(
+    (await source.inputValue()).replace('Good spaces.', 'My own copy.'),
+  )
+  await page.getByRole('button', { name: 'Apply changes', exact: true }).click()
+  await connectVoice(page)
+  const board = await gateway.call('read_board', {})
+  const result = await gateway.call('apply_actions', {
+    pageId: board.pageId,
+    actions: [
+      {
+        op: 'update',
+        shape: {
+          id: 'shape:forma',
+          type: 'website',
+          props: { title: 'Wrong title' },
+        },
+      },
+      {
+        op: 'create',
+        shape: { id: 'shape:temporary', type: 'website', x: 900, y: 900 },
+      },
+      {
+        op: 'create',
+        shape: { id: 'shape:invalid', type: 'website', props: { w: -1 } },
+      },
+    ],
+  })
+  expect(result.error).toEqual(expect.any(String))
+  const after = await gateway.call('read_board', {})
+  expect(after.shapes.map((shape: any) => shape.id).sort()).toEqual(
+    board.shapes.map((shape: any) => shape.id).sort(),
+  )
+  const heading = page
+    .frameLocator('iframe[title="Forma · Starting point"]')
+    .getByRole('heading')
+  await expect(heading).toContainText('My own copy.')
+  await page.getByRole('button', { name: 'Select — V', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(heading).toContainText('Good spaces.')
+  await expect(
+    page.getByText('Something went wrong', { exact: true }),
+  ).toHaveCount(0)
 })
 
 test('microphone uses GPT audio settings, mutes, resumes, and stops on end', async ({
@@ -431,6 +588,9 @@ test('a failed Gateway connection leaves an actionable error and allows retry', 
   await page.getByRole('button', { name: 'Start voice', exact: true }).click()
   await expect(page.locator('.voice-notice.is-error')).toContainText(
     'AI Gateway',
+  )
+  await expect(page.locator('.voice-notice.is-error')).not.toContainText(
+    'development credentials',
   )
   await expect(
     page.getByRole('button', { name: 'Start voice', exact: true }),

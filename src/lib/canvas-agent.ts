@@ -3,13 +3,12 @@ import {
   createShapeId,
   type Editor,
   type TLParentId,
+  type TLShape,
   type TLShapeId,
   type TLShapePartial,
 } from 'tldraw'
 import { applySchema, inspectSchema, readShapesSchema } from './tools'
-import { contentHash } from './content'
 import { capturePreview } from './preview'
-import type { WebsiteShape } from '@/components/website-shape'
 
 export function focusCanvas(editor: Editor, bounds: Box) {
   editor.zoomToBounds(bounds, {
@@ -18,124 +17,133 @@ export function focusCanvas(editor: Editor, bounds: Box) {
   })
 }
 
-export function readBoard(editor: Editor) {
+function describeShape(editor: Editor, shape: TLShape, includeHtml: boolean) {
+  return {
+    ...shape,
+    props:
+      shape.type === 'website' && !includeHtml
+        ? { ...shape.props, html: undefined }
+        : shape.props,
+    pageId: editor.getAncestorPageId(shape),
+    pageBounds: editor.getShapePageBounds(shape)?.toJson(),
+  }
+}
+
+export function readBoard(editor: Editor, { includeHtml = true } = {}) {
+  const shapes = editor.getCurrentPageShapes()
+  const selectedIds = editor.getSelectedShapeIds()
+  const viewport = editor.getViewportPageBounds()
   return {
     pageId: editor.getCurrentPageId(),
     name: editor.getCurrentPage().name,
-    selectedIds: editor.getSelectedShapeIds(),
-    viewport: editor.getViewportPageBounds().toJson(),
+    pages: editor.getPages().map(({ id, name }) => ({ id, name })),
+    selectedIds,
+    hoveredShapeId: editor.getHoveredShapeId(),
+    editingShapeId: editor.getEditingShapeId(),
+    selectedWebsiteIds: shapes
+      .filter(
+        (shape) =>
+          shape.type === 'website' &&
+          (selectedIds.includes(shape.id) ||
+            editor
+              .getShapeAncestors(shape)
+              .some((parent) => selectedIds.includes(parent.id))),
+      )
+      .map((shape) => shape.id),
+    visibleShapeIds: shapes
+      .filter((shape) => {
+        const bounds = editor.getShapePageBounds(shape)
+        return bounds && viewport.collides(bounds)
+      })
+      .map((shape) => shape.id),
+    viewport: viewport.toJson(),
     pointer: editor.inputs.getCurrentPagePoint(),
-    shapes: editor.getCurrentPageShapes().map((shape) => ({
-      ...shape,
-      props:
-        shape.type === 'website'
-          ? {
-              ...shape.props,
-              html: undefined,
-              contentHash: contentHash((shape as WebsiteShape).props.html),
-            }
-          : shape.props,
-      pageBounds: editor.getShapePageBounds(shape)?.toJson(),
-    })),
+    shapes: shapes.map((shape) => describeShape(editor, shape, includeHtml)),
   }
 }
 
 export function applyCanvasActions(editor: Editor, input: unknown) {
   const { pageId, actions } = applySchema.parse(input)
-  if (pageId !== editor.getCurrentPageId())
-    throw new Error(
-      'The user switched boards. Read the current board before acting.',
-    )
+  const before = new Map(
+    editor.store.query
+      .records('shape')
+      .get()
+      .map((shape) => [shape.id, shape]),
+  )
+  const missingIds = new Set<string>()
+  const existingIds = (ids: string[]) =>
+    ids.filter((id) => {
+      if (editor.getShape(id as TLShapeId)) return true
+      missingIds.add(id)
+      return false
+    }) as TLShapeId[]
   const mark = editor.markHistoryStoppingPoint('agent edit')
-  const beforeIds = new Set(editor.getCurrentPageShapeIds())
-  const requireIds = (ids: string[]) => {
-    const currentIds = editor.getCurrentPageShapeIds()
-    for (const id of ids)
-      if (!currentIds.has(id as TLShapeId))
-        throw new Error(`Shape ${id} is missing from this board`)
-    return ids as TLShapeId[]
-  }
-  try {
-    editor.run(() => {
+  let failure: Error | undefined
+  editor.run(() => {
+    try {
       for (const action of actions) {
-        if (action.op === 'create' || action.op === 'update') {
-          if (action.shape.parentId && action.shape.parentId !== pageId)
-            requireIds([action.shape.parentId])
-          if (
-            action.shape.props &&
-            typeof action.shape.props.html === 'string' &&
-            action.shape.props.html.length > 60000
-          )
-            throw new Error('Keep website HTML under 60000 characters')
-        }
         switch (action.op) {
           case 'create': {
-            const id = action.shape.id
-              ? (action.shape.id as TLShapeId)
-              : createShapeId()
+            const id =
+              (action.shape.id as TLShapeId | undefined) ?? createShapeId()
             if (editor.getShape(id))
-              throw new Error(`Shape ${id} already exists`)
+              throw new Error(
+                `Shape ${id} already exists. Use a new ID to create another shape.`,
+              )
             editor.createShape({
               ...action.shape,
               id,
-              parentId: action.shape.parentId ?? pageId,
+              parentId:
+                action.shape.parentId ?? pageId ?? editor.getCurrentPageId(),
             } as TLShapePartial)
             break
           }
           case 'update': {
-            requireIds([action.shape.id])
-            const existing = editor.getShape(action.shape.id as TLShapeId)!
-            if (existing.type !== action.shape.type)
-              throw new Error('Cannot change a shape type')
-            if (
-              existing.type === 'website' &&
-              action.shape.props?.html !== undefined &&
-              action.expectedContentHash !==
-                contentHash((existing as WebsiteShape).props.html)
-            )
-              throw new Error(
-                'HTML changed or expectedContentHash is missing. Read the shape again before editing.',
-              )
-            editor.updateShape(action.shape as TLShapePartial)
+            const [id] = existingIds([action.shape.id])
+            if (!id) break
+            const shape = editor.getShape(id)!
+            editor.updateShape({
+              ...action.shape,
+              type: shape.type,
+            } as TLShapePartial)
             break
           }
           case 'delete':
-            editor.deleteShapes(requireIds(action.ids))
+            editor.deleteShapes(existingIds(action.ids))
             break
           case 'duplicate':
-            editor.duplicateShapes(requireIds(action.ids), {
+            editor.duplicateShapes(existingIds(action.ids), {
               x: action.dx,
               y: action.dy,
             })
             break
           case 'group':
-            editor.groupShapes(requireIds(action.ids))
+            editor.groupShapes(existingIds(action.ids))
             break
           case 'ungroup':
-            editor.ungroupShapes(requireIds(action.ids))
+            editor.ungroupShapes(existingIds(action.ids))
             break
           case 'reparent':
-            if (action.parentId !== pageId) requireIds([action.parentId])
             editor.reparentShapes(
-              requireIds(action.ids),
+              existingIds(action.ids),
               action.parentId as TLParentId,
             )
             break
           case 'align':
-            editor.alignShapes(requireIds(action.ids), action.direction)
+            editor.alignShapes(existingIds(action.ids), action.direction)
             break
           case 'distribute':
-            editor.distributeShapes(requireIds(action.ids), action.direction)
+            editor.distributeShapes(existingIds(action.ids), action.direction)
             break
           case 'stack':
             editor.stackShapes(
-              requireIds(action.ids),
+              existingIds(action.ids),
               action.direction,
               action.gap,
             )
             break
           case 'reorder': {
-            const ids = requireIds(action.ids)
+            const ids = existingIds(action.ids)
             if (action.direction === 'front') editor.bringToFront(ids)
             if (action.direction === 'back') editor.sendToBack(ids)
             if (action.direction === 'forward') editor.bringForward(ids)
@@ -143,29 +151,42 @@ export function applyCanvasActions(editor: Editor, input: unknown) {
             break
           }
           case 'select':
-            editor.select(...requireIds(action.ids))
+            editor.select(...existingIds(action.ids))
             break
           case 'focus': {
-            const bounds = requireIds(action.ids).map((id) =>
-              editor.getShapePageBounds(id)!,
-            )
-            focusCanvas(editor, Box.Common(bounds))
+            const ids = existingIds(action.ids)
+            const page = editor.getAncestorPageId(ids[0])
+            if (page) editor.setCurrentPage(page)
+            const bounds = ids
+              .filter((id) => editor.getAncestorPageId(id) === page)
+              .map((id) => editor.getShapePageBounds(id))
+              .filter((bounds): bounds is Box => !!bounds)
+            if (bounds.length) focusCanvas(editor, Box.Common(bounds))
             break
           }
         }
       }
-    })
-    editor.markHistoryStoppingPoint('after agent edit')
-    return {
-      ok: true,
-      createdIds: [...editor.getCurrentPageShapeIds()].filter(
-        (id) => !beforeIds.has(id),
-      ),
-      board: readBoard(editor),
+    } catch (error) {
+      editor.bailToMark(mark)
+      failure = error instanceof Error ? error : new Error(String(error))
     }
-  } catch (error) {
-    editor.bailToMark(mark)
-    throw error
+  })
+  if (failure) throw failure
+  editor.markHistoryStoppingPoint('after agent edit')
+  const after = editor.store.query.records('shape').get()
+  const afterIds = new Set(after.map((shape) => shape.id))
+  return {
+    ok: true,
+    createdIds: after
+      .filter((shape) => !before.has(shape.id))
+      .map((shape) => shape.id),
+    updatedIds: after
+      .filter((shape) => before.has(shape.id) && before.get(shape.id) !== shape)
+      .map((shape) => shape.id),
+    deletedIds: [...before.keys()].filter((id) => !afterIds.has(id)),
+    missingIds: [...missingIds],
+    pageId: editor.getCurrentPageId(),
+    selectedIds: editor.getSelectedShapeIds(),
   }
 }
 
@@ -175,8 +196,7 @@ export async function captureCanvas(editor: Editor) {
     const box = editor.getShapePageBounds(shape)
     return box && bounds.collides(box)
   })
-  if (!shapes.length)
-    throw new Error('No shapes are visible. Focus a website first.')
+  if (!shapes.length) return null
   const websites = shapes.filter((shape) => shape.type === 'website')
   const results = await Promise.allSettled(
     websites.map((shape) => capturePreview(shape.id)),
@@ -210,26 +230,27 @@ export async function executeCanvasTool(
       const { ids } = readShapesSchema.parse(args)
       return ids.map((id) => {
         const shape = editor.getShape(id as TLShapeId)
-        if (!shape || !editor.getCurrentPageShapeIds().has(shape.id))
-          return { id, error: 'Shape missing from current board' }
-        return {
-          ...shape,
-          ...(shape.type === 'website'
-            ? { contentHash: contentHash((shape as WebsiteShape).props.html) }
-            : {}),
-        }
+        return shape
+          ? describeShape(editor, shape, true)
+          : { id, missing: true }
       })
     }
     case 'apply_actions':
       return applyCanvasActions(editor, args)
     case 'inspect_canvas': {
       const { question } = inspectSchema.parse(args)
-      const context = readBoard(editor)
+      const context = readBoard(editor, { includeHtml: false })
       const captured = await captureCanvas(editor)
+      if (!captured)
+        return { observation: 'The current viewport is empty.', context }
       const response = await fetch('/api/inspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...captured, question, context }),
+        body: JSON.stringify({
+          ...captured,
+          question: question || 'Describe the websites and annotations.',
+          context,
+        }),
         signal,
       })
       const result = await response.json()
