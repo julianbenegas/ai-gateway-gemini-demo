@@ -429,7 +429,7 @@ export function VoiceSession({ editor }: { editor: Editor }) {
         <button
           className="voice-start"
           onClick={() => void start()}
-          title="Talk to GPT Realtime 2. The agent can read your board and website source through its tools."
+          title="Talk to Gemini Live. The agent can read your board and website source through its tools."
         >
           <AudioLines size={16} />
           Start voice

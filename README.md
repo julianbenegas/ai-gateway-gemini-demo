@@ -1,6 +1,6 @@
 # Margin
 
-A small Next.js website design canvas. Talk to GPT Realtime 2, draw feedback, and let the agent work directly with tldraw shapes. The interface uses dark, neutral surfaces and self-hosted Geist typography inspired by Vercel Design.
+A small Next.js website design canvas. Talk to Gemini 3.8 Live, draw feedback, and let the agent work directly with tldraw shapes. The interface uses dark, neutral surfaces and self-hosted Geist typography inspired by Vercel Design.
 
 ## Run
 
@@ -21,9 +21,9 @@ Import this directory as the project's root. The normal Next.js build configurat
 
 **Realtime voice requires a server-side `AI_GATEWAY_API_KEY`.** Gateway's realtime client-secret endpoint currently rejects OIDC-only requests with `Client secrets can only be minted with a Gateway API key`. Configure a Gateway key from the intended Vercel team as `AI_GATEWAY_API_KEY` in the project's production environment, then redeploy. Never prefix this variable with `NEXT_PUBLIC_` or expose its value to the browser. The team must have AI Gateway access and available usage.
 
-`/api/realtime` exchanges the server credential for a short-lived browser token for `openai/gpt-realtime-2`. Normal server-side model calls, such as visual inspection, can use Vercel OIDC, but realtime token minting requires the API key. The SDK prefers `AI_GATEWAY_API_KEY` over OIDC whenever both are available.
+`/api/realtime` exchanges the server credential for a short-lived browser token for `google/gemini-3.8-live`. Normal server-side model calls, such as visual inspection, can use Vercel OIDC, but realtime token minting requires the API key. The SDK prefers `AI_GATEWAY_API_KEY` over OIDC whenever both are available. Model access depends on the key: Gemini succeeded in the standalone reproduction after its key was replaced with one from the intended team. Do not infer availability from tests using an unverified inherited shell key.
 
-The realtime session uses the Marin voice and 24 kHz `audio/pcm` for both input and output. These settings are in `src/lib/realtime-config.ts`. The switch from Gemini required these audio settings as well as the model ID; the canvas tool contract stays the same.
+The realtime session uses the Aoede voice, 16 kHz `audio/pcm` input, and 24 kHz `audio/pcm` output. These settings are in `src/lib/realtime-config.ts`. The model switch preserves the canvas tools and on-demand context reads.
 
 For local voice testing, supply the same team's Gateway key through the local server environment or the project's development environment, then link the directory, pull its development configuration, and start the app:
 
@@ -60,7 +60,7 @@ Edits are last-write-wins with tldraw undo. There is no model-supplied hash, HTM
 
 There are two model paths:
 
-1. **Realtime:** microphone audio goes through AI Gateway to GPT Realtime 2. Canvas state and website source are shared only in response to the agent’s tool calls. The agent can request this information even with no selection; there are no automatically injected board messages and the user does not type agent messages. Microphone capture begins only after the user starts a session and grants permission. Mute and end stop its audio tracks. No separate input transcription service is requested.
+1. **Realtime:** microphone audio goes through AI Gateway to Gemini 3.8 Live. Canvas state and website source are shared only in response to the agent’s tool calls. The agent can request this information even with no selection; there are no automatically injected board messages and the user does not type agent messages. Microphone capture begins only after the user starts a session and grants permission. Mute and end stop its audio tracks. No separate input transcription service is requested.
 2. **Visual inspection:** when useful, `inspect_canvas` captures the current viewport and calls `/api/inspect`, which sends the image and positional shape context (without website source) through Gateway to `google/gemini-3.8-flash`. It returns visual observations to the live model. This separate billed request is optional for edits. An empty viewport returns an observation directly. The installed Gateway realtime event schema has no image input event.
 
 Website iframes use `sandbox="allow-scripts"` without same-origin access. A small capture bridge uses `html-to-image` inside the iframe, returning pixels through a one-shot `MessageChannel`. The website shape's SVG export uses those pixels, so normal tldraw export can combine the website and annotations. Capture never grants the iframe access to the editor document. The iframe CSP blocks network APIs, form submission, and external scripts other than this app's capture bundle.
@@ -94,4 +94,4 @@ Browser tests use a simulated Gateway WebSocket with the real editor, tool execu
 
 A live Gateway check on September 16 requested the heading “Great” with no selection and zero injected messages. GPT Realtime 2 called `read_board`, then `read_shapes`, then `edit_html`, and the heading changed successfully. An earlier full-page test using automatic context added five sections in a single 11,197-character update and completed in 56 seconds including the spoken prompt. These tests used an API key, not OIDC-only authentication, and do not establish the cause of previously unrecorded production stalls. Model design quality still needs hands-on evaluation.
 
-Dependencies are pinned; AI SDK packages were refreshed on September 16, 2026: Next.js 16.3.5, React 19.3.0, tldraw 5.4.2, AI SDK 7.0.103, Gateway 4.0.83, and the React AI SDK 4.0.106. See `package-lock.json` for all resolved versions.
+Dependencies are pinned; AI SDK packages were refreshed on September 22, 2026: Next.js 16.3.5, React 19.3.0, tldraw 5.4.2, AI SDK 7.0.110, Gateway 4.0.89, and the React AI SDK 4.0.113. See `package-lock.json` for all resolved versions.

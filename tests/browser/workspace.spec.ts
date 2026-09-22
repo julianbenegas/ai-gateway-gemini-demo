@@ -831,7 +831,7 @@ test('native validation failures roll back a batch without losing earlier edits'
   ).toHaveCount(0)
 })
 
-test('microphone uses GPT audio settings, mutes, resumes, and stops on end', async ({
+test('microphone uses Gemini audio settings, mutes, resumes, and stops on end', async ({
   page,
 }) => {
   const gateway = await mockGateway(page)
@@ -860,13 +860,13 @@ test('microphone uses GPT audio settings, mutes, resumes, and stops on end', asy
   )!.config as any
   expect(configuration.inputAudioFormat).toEqual({
     type: 'audio/pcm',
-    rate: 24000,
+    rate: 16000,
   })
   expect(configuration.outputAudioFormat).toEqual({
     type: 'audio/pcm',
     rate: 24000,
   })
-  expect(configuration.voice).toBe('marin')
+  expect(configuration.voice).toBe('Aoede')
   expect(configuration.inputAudioTranscription).toBeUndefined()
   await page
     .getByRole('button', { name: 'Mute microphone', exact: true })
