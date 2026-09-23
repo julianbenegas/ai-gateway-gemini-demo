@@ -1,4 +1,5 @@
-import { test, expect, type Page, type WebSocketRoute } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+import { mockGateway } from './gateway'
 import { readFile, writeFile } from 'node:fs/promises'
 
 test('API origin checks accept the browser host and reject other origins', async ({
@@ -41,59 +42,6 @@ async function openWebsiteMenu(page: Page) {
 async function openCode(page: Page) {
   await openWebsiteMenu(page)
   await page.getByRole('menuitem', { name: 'View code', exact: true }).click()
-}
-
-async function mockGateway(page: Page) {
-  let socket: WebSocketRoute
-  const outputs = new Map<string, unknown>()
-  const sent: Record<string, unknown>[] = []
-  await page.route('**/api/realtime', (route) =>
-    route.fulfill({
-      json: {
-        token: 'test-token',
-        url: 'wss://gateway.test/realtime',
-        tools: [],
-      },
-    }),
-  )
-  await page.routeWebSocket('wss://gateway.test/realtime', (ws) => {
-    socket = ws
-    ws.onMessage((message) => {
-      const event = JSON.parse(String(message))
-      sent.push(event)
-      if (event.type === 'session-update')
-        ws.send(JSON.stringify({ type: 'session-updated', raw: {} }))
-      if (
-        event.type === 'conversation-item-create' &&
-        event.item?.type === 'function-call-output'
-      )
-        outputs.set(event.item.callId, JSON.parse(event.item.output))
-    })
-  })
-  let n = 0
-  return {
-    sent,
-    outputs,
-    send(event: Record<string, unknown>) {
-      socket.send(JSON.stringify({ ...event, raw: event.raw ?? {} }))
-    },
-    async call(name: string, args: unknown, id = `call-${++n}`) {
-      await expect.poll(() => Boolean(socket)).toBe(true)
-      socket!.send(
-        JSON.stringify({
-          type: 'function-call-arguments-done',
-          responseId: `response-${n}`,
-          itemId: `item-${id}`,
-          callId: id,
-          name,
-          arguments: JSON.stringify(args),
-          raw: {},
-        }),
-      )
-      await expect.poll(() => outputs.has(id), { timeout: 20000 }).toBe(true)
-      return outputs.get(id) as Record<string, any>
-    },
-  }
 }
 
 async function connectVoice(page: Page) {

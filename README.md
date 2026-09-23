@@ -15,6 +15,26 @@ Open http://localhost:3000. Canvas editing, HTML previews, variations, boards, a
 
 The sidebar contains only boards. The first board includes an editable sample website. Right-click a selected website for **View code** or **Export as HTML**. Use tldraw’s native tools and shortcuts to resize, duplicate, draw, annotate, group, and arrange. Its main menu includes **Add website** and **Save .tldr file**. Double-click a website to interact; click the canvas to return to drawing. **Voice is the only way to talk to the agent.** Click **Start voice** in the header, then speak. There is no chat composer, prompt shortcut, or transcript panel. The header shows Listening, Thinking, Building, and Speaking states, plus mute and end-session controls; brief notifications show canvas activity and errors.
 
+## V2: one website, remote source
+
+Open `/v2` for the site-focused demo. **Talk & annotate** starts the microphone and enables element selection with one click (or keeps the pencil active if already drawing). Select an element, speak a change, or attach a note with the annotation button. The **pencil** draws freehand directly over the website, without needing a selection or voice connection. Drawings save automatically; undo removes the last saved stroke, and the annotations list can delete individual marks. **View source** and **Download HTML** expose the actual saved `index.html`. The board at `/` remains available.
+
+The v2 agent has two tools: `read_selection` and `bash`. Selection context is requested on demand and never injected into the model automatically. `read_selection` includes current DOM text, HTML, an element identifier, notes, and freehand paths. A drawing stores points relative to the common DOM ancestor under the stroke, plus references to elements crossed or enclosed by its bounds. Marks follow their anchor on scroll and resize; if an anchor is deleted, its original reference remains available but the stroke is hidden. The agent receives geometry and DOM references, not a screenshot or handwriting recognition.
+
+`bash` runs real commands in the remote Sandbox with `/vercel/margin` as the working directory. It can read/write files, run scripts, install packages, and use the Sandbox's network access. Each call gets a fresh shell and returns `stdout`, `stderr`, and `exitCode`; shell variables and directory changes do not carry across calls. Files persist. Commands have a two-minute execution timeout, and aborting the request kills the running command. No application credentials are passed into the shell. After completion (including a nonzero exit), the app reads `index.html` and refreshes the preview. Only command output is returned to the agent; the source is not automatically appended to its context. The preview still renders a self-contained `index.html`, not a dev server or additional Sandbox files. Background changes are visible on the next tool completion or page reload.
+
+Each browser session gets a persistent Vercel Sandbox when it first starts voice or saves a note or drawing. Files live at `/vercel/margin/index.html` and `/vercel/margin/annotations.json`. An unguessable HttpOnly, SameSite=Strict cookie identifies that workspace; it is not returned in model context. Other browsers start with their own site. This is a bearer session capability, not an account/login system: anonymous workspace creation and model usage still require deployment-level access/spend controls for a public service.
+
+Sandbox authentication uses the linked project's Vercel OIDC credentials. Production credentials are supplied by Vercel. Locally, run `vercel env pull` for a fresh project token. Sandbox receives no Gateway key. Realtime still requires the correct team's `AI_GATEWAY_API_KEY`; do not substitute an unverified inherited shell key.
+
+Sandbox sessions stop after five minutes and automatically resume on the next file operation. Persistence keeps the last automatic snapshot; the default snapshot retention and browser cookie lifetime are 30 days. Refreshing the page reads the remote files. App-managed writes use an atomic rename; Bash writes use whatever the command specifies. UI mutations are sequenced within the tab. This prototype is not a collaborative editor; concurrent edits in separate tabs can overwrite each other.
+
+Server-side HTML normalization adds stable `data-margin-id` attributes when source is loaded. Existing identifiers are retained; new elements get new identifiers. Notes and drawings track those elements through scrolling, resizing, and source updates. If a target disappears, its annotation retains the original reference and is marked detached rather than silently attaching elsewhere. Full rewrites that discard identifiers detach old annotations. A missing `index.html` produces an empty preview that can be repaired through Bash. Missing or malformed `annotations.json` is displayed as an empty annotation list without rewriting the file on read.
+
+The preview remains a sandboxed iframe with a MessageChannel bridge. It can run its own inline JavaScript but cannot access the editor document or call APIs. The bridge supplies selection context and positions the annotation pins and drawings. Bash runs server-side in the visitor's remote Sandbox, independently of the preview iframe.
+
+New external I/O: `/api/v2/site` and `/api/v2/annotations` read/write the session's Vercel Sandbox; `/api/v2/bash` executes commands in that Sandbox and refreshes the saved source; `/api/v2/realtime` mints a Gateway token after checking that the workspace exists. Merely opening a new `/v2` page displays the starter without provisioning a Sandbox.
+
 ## Vercel
 
 Import this directory as the project's root. The normal Next.js build configuration works.
@@ -76,7 +96,11 @@ tldraw fonts, icons, and translations and the capture library are self-hosted; `
 - `src/lib/tools.ts`: tool schemas and live model instructions.
 - `src/lib/voice-diagnostics.ts`: local response status/usage diagnostics.
 - `src/lib/canvas-agent.ts`: reads, validated mutations, rollback, and visual inspection.
-- `src/components/voice-session.tsx`: compact voice controls, tool routing, response progress, and microphone lifecycle.
+- `src/components/voice-session.tsx`: board voice controls.
+- `src/components/use-voice-agent.ts`: shared audio lifecycle, tool routing, and response recovery.
+- `src/components/v2/site-studio.tsx`: v2 preview, toolbar, selection, and annotations.
+- `src/lib/v2/workspace.ts`: cookie-scoped Sandbox storage and atomic file writes.
+- `public/v2-preview.js`: iframe element selection and annotation positioning.
 - `src/lib/realtime-config.ts`: model-compatible audio and voice settings.
 - `src/app/api/realtime/route.ts` and `src/app/api/inspect/route.ts`: all server-side model I/O.
 - `src/components/workspace.tsx`: board navigation, design actions, and local persistence.
@@ -92,6 +116,6 @@ npm test
 
 Browser tests use a simulated Gateway WebSocket with the real editor, tool executor, preview capture, and browser microphone pipeline. They cover voice-only interaction, audio lifecycle, malformed tool recovery, interruption, duplication, HTML replacements with undo, and on-demand canvas reads. The context regression confirms that connection, selection, speech, document changes, and board switches inject no text messages, while tool reads return fresh state.
 
-A live Gateway check on September 16 requested the heading “Great” with no selection and zero injected messages. GPT Realtime 2 called `read_board`, then `read_shapes`, then `edit_html`, and the heading changed successfully. An earlier full-page test using automatic context added five sections in a single 11,197-character update and completed in 56 seconds including the spoken prompt. These tests used an API key, not OIDC-only authentication, and do not establish the cause of previously unrecorded production stalls. Model design quality still needs hands-on evaluation.
+A live Gateway check on September 16 requested the heading “Great” with no selection and zero injected messages. GPT Realtime 2 called `read_board`, then `read_shapes`, then `edit_html`, and the heading changed successfully. An earlier full-page test using automatic context added five sections in a single 11,197-character update and completed in 56 seconds including the spoken prompt. These tests used an API key, not OIDC-only authentication, and do not establish the cause of previously unrecorded production stalls. V2 browser regressions additionally cover one-click activation, DOM-bound notes, selection refresh after edits, deleted targets, persistence after reload, and cancellation during workspace setup. A separate live Sandbox/API check saved HTML and a note, stopped the VM, reloaded through the API, and confirmed both persisted while an anonymous visitor could not write. Model design quality still needs hands-on evaluation.
 
 Dependencies are pinned; AI SDK packages were refreshed on September 22, 2026: Next.js 16.3.5, React 19.3.0, tldraw 5.4.2, AI SDK 7.0.110, Gateway 4.0.89, and the React AI SDK 4.0.113. See `package-lock.json` for all resolved versions.
