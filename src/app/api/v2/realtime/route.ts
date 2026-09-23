@@ -4,7 +4,7 @@ import { LIVE_MODEL } from '@/lib/config'
 import { checkOrigin, gatewayError } from '@/lib/server'
 import { siteTools } from '@/lib/v2/tools'
 import {
-  getWorkspace,
+  listDesigns,
   WorkspaceError,
   workspaceFailure,
 } from '@/lib/v2/workspace'
@@ -15,7 +15,8 @@ export async function POST(request: Request) {
   if (!checkOrigin(request))
     return Response.json({ error: 'Invalid request origin' }, { status: 403 })
   try {
-    await getWorkspace()
+    if (!(await listDesigns()).length)
+      throw new WorkspaceError('Create a design to start voice.', 401)
     const [credentials, tools] = await Promise.all([
       gateway.experimental_realtime.getToken({
         model: LIVE_MODEL,

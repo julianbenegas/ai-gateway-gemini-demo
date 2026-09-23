@@ -1,18 +1,31 @@
 import 'server-only'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { cookies } from 'next/headers'
-import { Sandbox } from '@vercel/sandbox'
+import { executeBash } from './execute-bash'
 import { z, ZodError } from 'zod'
 import { V2_STARTER_HTML, prepareHtml } from './html'
 import { annotationSchema, bashSchema } from './tools'
-import type { SiteAnnotation, SiteDocument } from './types'
+import {
+  changedFiles,
+  HTML,
+  NOTES,
+  restoreFiles,
+  ROOT,
+  snapshotFiles,
+  type WorkspaceData,
+} from './filesystem.mjs'
+import {
+  cancellationKey,
+  designsKey,
+  saveChanges,
+  workspaceKey,
+  workspaceRedis,
+} from './redis'
+import type { Design, SiteAnnotation, SiteDocument } from './types'
 
-const COOKIE = 'margin_v2_session'
-const ROOT = '/vercel/margin'
-const HTML = `${ROOT}/index.html`
-const NOTES = `${ROOT}/annotations.json`
-const COMMANDS = `${ROOT}/.commands`
+const COOKIE = 'margin_v2_owner'
 const executionSchema = z.object({ executionId: z.uuid() })
+type Workspace = { owner: string; id: string; data: WorkspaceData }
 
 export class WorkspaceError extends Error {
   constructor(
@@ -23,147 +36,194 @@ export class WorkspaceError extends Error {
   }
 }
 
-async function sessionId() {
+async function ownerId() {
   const value = (await cookies()).get(COOKIE)?.value
   return value && /^[a-f0-9]{36}$/.test(value) ? value : null
 }
 
-export async function getWorkspace() {
-  const id = await sessionId()
-  if (!id) throw new WorkspaceError('Start your site to save changes.', 401)
-  return Sandbox.get({ name: `margin-v2-${id}` })
+export async function getWorkspace(request: Request): Promise<Workspace> {
+  const owner = await ownerId()
+  if (!owner) throw new WorkspaceError('Create a design to save changes.', 401)
+  const id = z.uuid().parse(new URL(request.url).searchParams.get('designId'))
+  const data = await workspaceRedis().get<WorkspaceData>(
+    workspaceKey(owner, id),
+  )
+  if (!data) throw new WorkspaceError('This design could not be found.', 404)
+  return { owner, id, data }
+}
+
+export async function listDesigns(): Promise<Design[]> {
+  const owner = await ownerId()
+  if (!owner) return []
+  const designs = await workspaceRedis().hgetall<Record<string, Design>>(
+    designsKey(owner),
+  )
+  return Object.values(designs ?? {}).sort((a, b) => a.createdAt - b.createdAt)
 }
 
 export async function startWorkspace() {
-  if (await sessionId()) return getWorkspace()
-  const id = randomBytes(18).toString('hex')
-  const sandbox = await Sandbox.create({
-    name: `margin-v2-${id}`,
-    persistent: true,
-    timeout: 5 * 60 * 1000,
-    keepLastSnapshots: { count: 1 },
-  })
-  await sandbox.fs.mkdir(ROOT, { recursive: true })
-  await sandbox.fs.writeFile(HTML, V2_STARTER_HTML)
-  await sandbox.fs.writeFile(NOTES, '[]')
-  ;(await cookies()).set(COOKIE, id, {
+  const owner = (await ownerId()) ?? randomBytes(18).toString('hex')
+  const id = randomUUID()
+  const count = await workspaceRedis().hlen(designsKey(owner))
+  const design: Design = {
+    id,
+    name: `Design ${count + 1}`,
+    createdAt: Date.now(),
+  }
+  const data: WorkspaceData = {
+    files: {
+      [HTML]: { type: 'file', content: V2_STARTER_HTML, mode: 0o644 },
+      [NOTES]: { type: 'file', content: '[]', mode: 0o644 },
+      [ROOT]: { type: 'directory', mode: 0o755 },
+    },
+  }
+  await workspaceRedis()
+    .multi()
+    .set(workspaceKey(owner, id), data)
+    .hset(designsKey(owner), { [id]: design })
+    .exec()
+  ;(await cookies()).set(COOKIE, owner, {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     path: '/api/v2',
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: 365 * 24 * 60 * 60,
   })
-  return sandbox
+  return { owner, id, data }
 }
 
-async function atomicWrite(sandbox: Sandbox, path: string, content: string) {
-  const temporary = `${path}.${randomUUID()}.tmp`
-  await sandbox.fs.writeFile(temporary, content)
-  await sandbox.fs.rename(temporary, path)
-}
-
-export async function readSite(sandbox?: Sandbox): Promise<SiteDocument> {
-  if (!sandbox && !(await sessionId()))
-    return { html: V2_STARTER_HTML, annotations: [], persisted: false }
-  const workspace = sandbox ?? (await getWorkspace())
-  const [html, notes] = await Promise.all([
-    workspace.readFileToBuffer({ path: HTML }),
-    workspace.readFileToBuffer({ path: NOTES }),
-  ])
-  const source = html?.toString('utf8') ?? ''
-  const prepared = source ? prepareHtml(source) : ''
-  if (prepared !== source) await atomicWrite(workspace, HTML, prepared)
+export async function readSite(workspace?: Workspace): Promise<SiteDocument> {
+  if (!workspace)
+    return {
+      id: null,
+      html: V2_STARTER_HTML,
+      annotations: [],
+      persisted: false,
+    }
+  const fs = await restoreFiles(workspace.data)
+  const html = (await fs.exists(HTML)) ? await fs.readFile(HTML) : ''
   let annotations: SiteAnnotation[] = []
   try {
     annotations = annotationSchema
       .array()
-      .parse(JSON.parse(notes?.toString('utf8') ?? '[]'))
-  } catch (error) {
-    if (!(error instanceof SyntaxError || error instanceof ZodError))
-      throw error
-  }
-  return { html: prepared, annotations, persisted: true }
+      .parse(JSON.parse(await fs.readFile(NOTES)))
+  } catch {}
+  return { id: workspace.id, html, annotations, persisted: true }
 }
 
-export async function runBash(input: unknown, signal: AbortSignal) {
+export async function runBash(request: Request) {
+  const input = await request.json()
   const { command } = bashSchema.parse(input)
   const { executionId } = executionSchema.parse(input)
-  const sandbox = await getWorkspace()
-  await sandbox.fs.mkdir(COMMANDS, { recursive: true })
-  const cancellation = `${COMMANDS}/${executionId}.cancel`
-  if (await sandbox.readFileToBuffer({ path: cancellation }))
-    throw new WorkspaceError('Command cancelled.', 409)
-  const process = await sandbox.runCommand({
-    cmd: 'bash',
-    args: ['-c', command],
-    cwd: ROOT,
-    detached: true,
-    timeoutMs: 120_000,
-    signal,
-  })
-  const cancel = () => {
-    void process.kill('SIGKILL').catch(() => {})
-  }
-  signal.addEventListener('abort', cancel, { once: true })
-  try {
-    await atomicWrite(sandbox, `${COMMANDS}/${executionId}`, process.cmdId)
-    if (await sandbox.readFileToBuffer({ path: cancellation }))
-      await process.kill('SIGKILL')
-    signal.throwIfAborted()
-    const finished = await process.wait({ signal })
-    const [stdout, stderr] = await Promise.all([
-      finished.stdout({ signal }),
-      finished.stderr({ signal }),
-    ])
-    let site: SiteDocument | null = null
-    let previewError: string | null = null
+  const workspace = await getWorkspace(request)
+  const cancelled = new AbortController()
+  const signal = AbortSignal.any([request.signal, cancelled.signal])
+  const key = cancellationKey(workspace.owner, workspace.id, executionId)
+  let checking = false
+  const poll = setInterval(async () => {
+    if (checking) return
+    checking = true
     try {
-      site = await readSite(sandbox)
+      if (await workspaceRedis().exists(key)) cancelled.abort()
     } catch {
-      previewError =
-        'The command finished, but index.html could not be loaded. Inspect the file with bash and repair it.'
+      cancelled.abort()
+    } finally {
+      checking = false
     }
-    return { exitCode: finished.exitCode, stdout, stderr, site, previewError }
+  }, 1000)
+  try {
+    const output = await executeBash(workspace.data, command, signal)
+    if (signal.aborted)
+      return {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        exitCode: 130,
+        cancelled: true,
+        site: null,
+      }
+    const fs = await restoreFiles(output.data)
+    if (await fs.exists(HTML)) {
+      const html = await fs.readFile(HTML)
+      const prepared = prepareHtml(html)
+      if (prepared !== html) await fs.writeFile(HTML, prepared)
+    }
+    const after = await snapshotFiles(fs)
+    const changes = changedFiles(workspace.data, after)
+    const data =
+      Object.keys(changes.writes).length || changes.deletes.length
+        ? await saveChanges(workspace.owner, workspace.id, changes, executionId)
+        : workspace.data
+    return {
+      stdout: output.stdout,
+      stderr: output.stderr,
+      exitCode: data ? output.exitCode : 130,
+      cancelled: !data,
+      site: data ? await readSite({ ...workspace, data }) : null,
+      previewError: null,
+    }
   } catch (error) {
-    await process.kill('SIGKILL').catch(() => {})
+    if (signal.aborted)
+      return {
+        stdout: '',
+        stderr: 'Command cancelled.',
+        exitCode: 130,
+        cancelled: true,
+        site: null,
+      }
     throw error
   } finally {
-    signal.removeEventListener('abort', cancel)
+    clearInterval(poll)
   }
 }
 
-export async function cancelBash(input: unknown) {
-  const { executionId } = executionSchema.parse(input)
-  const sandbox = await getWorkspace()
-  await sandbox.fs.mkdir(COMMANDS, { recursive: true })
-  await sandbox.fs.writeFile(`${COMMANDS}/${executionId}.cancel`, '1')
-  const commandId = await sandbox.readFileToBuffer({
-    path: `${COMMANDS}/${executionId}`,
+export async function cancelBash(request: Request) {
+  const { executionId } = executionSchema.parse(await request.json())
+  const owner = await ownerId()
+  if (!owner) throw new WorkspaceError('Create a design to save changes.', 401)
+  const id = z.uuid().parse(new URL(request.url).searchParams.get('designId'))
+  await workspaceRedis().set(cancellationKey(owner, id, executionId), true, {
+    ex: 180,
   })
-  if (commandId) {
-    const process = await sandbox.getCommand(commandId.toString('utf8'))
-    if (process.exitCode === null) await process.kill('SIGKILL')
-  }
   return { cancelled: true }
 }
 
-export async function saveAnnotation(annotation: SiteAnnotation) {
-  const sandbox = await getWorkspace()
-  const site = await readSite(sandbox)
-  const annotations = [
-    ...site.annotations.filter((note) => note.id !== annotation.id),
-    annotation,
-  ]
-  await atomicWrite(sandbox, NOTES, JSON.stringify(annotations))
+async function updateAnnotations(
+  workspace: Workspace,
+  annotations: SiteAnnotation[],
+) {
+  const data = await saveChanges(workspace.owner, workspace.id, {
+    writes: {
+      [NOTES]: {
+        type: 'file',
+        content: JSON.stringify(annotations),
+        mode: 0o644,
+      },
+    },
+    deletes: [],
+  })
+  if (!data) throw new WorkspaceError('This design could not be found.', 404)
   return annotations
 }
 
-export async function removeAnnotation(id: string) {
-  const sandbox = await getWorkspace()
-  const site = await readSite(sandbox)
-  const annotations = site.annotations.filter((note) => note.id !== id)
-  await atomicWrite(sandbox, NOTES, JSON.stringify(annotations))
-  return annotations
+export async function saveAnnotation(
+  request: Request,
+  annotation: SiteAnnotation,
+) {
+  const workspace = await getWorkspace(request)
+  const site = await readSite(workspace)
+  return updateAnnotations(workspace, [
+    ...site.annotations.filter((note) => note.id !== annotation.id),
+    annotation,
+  ])
+}
+
+export async function removeAnnotation(request: Request, id: string) {
+  const workspace = await getWorkspace(request)
+  const site = await readSite(workspace)
+  return updateAnnotations(
+    workspace,
+    site.annotations.filter((note) => note.id !== id),
+  )
 }
 
 export function workspaceFailure(error: unknown) {
@@ -172,13 +232,12 @@ export function workspaceFailure(error: unknown) {
   if (error instanceof WorkspaceError)
     return Response.json({ error: error.message }, { status: error.status })
   console.error(
-    'Remote workspace failed:',
+    'Workspace failed:',
     error instanceof Error ? error.message : 'Unknown error',
   )
   return Response.json(
     {
-      error:
-        'The remote workspace could not complete this request. Please try again.',
+      error: 'The workspace could not complete this request. Please try again.',
     },
     { status: 503 },
   )

@@ -1,6 +1,14 @@
 import type { NextConfig } from 'next'
 
 const config: NextConfig = {
+  serverExternalPackages: ['just-bash'],
+  outputFileTracingIncludes: {
+    '/api/v2/bash': [
+      './scripts/v2-bash-worker.mjs',
+      './src/lib/v2/filesystem.mjs',
+      './node_modules/just-bash/**/*',
+    ],
+  },
   async headers() {
     return [
       {

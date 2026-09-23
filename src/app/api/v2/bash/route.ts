@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   if (!checkOrigin(request))
     return Response.json({ error: 'Invalid request origin' }, { status: 403 })
   try {
-    return Response.json(await runBash(await request.json(), request.signal), {
+    return Response.json(await runBash(request), {
       headers: { 'Cache-Control': 'no-store' },
     })
   } catch (error) {
@@ -19,7 +19,7 @@ export async function DELETE(request: Request) {
   if (!checkOrigin(request))
     return Response.json({ error: 'Invalid request origin' }, { status: 403 })
   try {
-    return Response.json(await cancelBash(await request.json()), {
+    return Response.json(await cancelBash(request), {
       headers: { 'Cache-Control': 'no-store' },
     })
   } catch (error) {

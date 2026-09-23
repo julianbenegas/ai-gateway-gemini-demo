@@ -1,10 +1,75 @@
 .v2-studio {
+  --v2-sidebar-width: 0px;
   position: fixed;
   inset: 0;
   background: #f4f1ea;
   color: #171717;
   font-family: var(--font-ui);
   color-scheme: light;
+}
+.v2-studio[data-sidebar-open='true'] {
+  --v2-sidebar-width: 180px;
+}
+.v2-designs {
+  position: absolute;
+  top: 56px;
+  bottom: 0;
+  left: 0;
+  width: 180px;
+  padding: 14px 10px;
+  background: #fafafa;
+  border-right: 1px solid #eaeaea;
+  z-index: 4;
+  overflow: auto;
+}
+.v2-designs header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 12px;
+  color: #888;
+  font-size: 11px;
+}
+.v2-designs header button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-content: center;
+  border-radius: 5px;
+  color: #555;
+}
+.v2-designs button:hover {
+  background: #eee;
+}
+.v2-design {
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  margin-bottom: 3px;
+  font-size: 12px;
+  color: #666;
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v2-design[aria-current='page'] {
+  background: #ededed;
+  color: #171717;
+}
+.v2-designs p {
+  padding: 0 6px;
+  color: #999;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.v2-opening {
+  position: absolute;
+  inset: 56px 0 0 var(--v2-sidebar-width);
+  background: #f4f1ea99;
+  display: grid;
+  place-content: center;
+  z-index: 6;
 }
 .v2-header {
   position: absolute;
@@ -81,8 +146,8 @@
 .v2-preview {
   position: absolute;
   top: 56px;
-  left: 0;
-  width: 100%;
+  left: var(--v2-sidebar-width);
+  width: calc(100% - var(--v2-sidebar-width));
   height: calc(100% - 56px);
   border: 0;
   background: #f4f1ea;
@@ -105,7 +170,7 @@
 .v2-dock {
   position: absolute;
   bottom: 18px;
-  left: 50%;
+  left: calc((100% + var(--v2-sidebar-width)) / 2);
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -391,6 +456,12 @@
   gap: 6px;
 }
 @media (max-width: 600px) {
+  .v2-studio[data-sidebar-open='true'] {
+    --v2-sidebar-width: 0px;
+  }
+  .v2-designs {
+    box-shadow: 6px 0 20px #0001;
+  }
   .v2-header {
     padding: 0 14px;
     gap: 10px;

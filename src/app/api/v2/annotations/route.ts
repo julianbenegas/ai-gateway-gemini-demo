@@ -14,7 +14,10 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Invalid request origin' }, { status: 403 })
   try {
     return Response.json(
-      await saveAnnotation(annotationSchema.parse(await request.json())),
+      await saveAnnotation(
+        request,
+        annotationSchema.parse(await request.json()),
+      ),
     )
   } catch (error) {
     return workspaceFailure(error)
@@ -27,6 +30,7 @@ export async function DELETE(request: Request) {
   try {
     return Response.json(
       await removeAnnotation(
+        request,
         z.object({ id: z.string() }).parse(await request.json()).id,
       ),
     )

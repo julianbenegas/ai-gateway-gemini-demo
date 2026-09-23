@@ -1,13 +1,25 @@
 import { checkOrigin } from '@/lib/server'
-import { readSite, startWorkspace, workspaceFailure } from '@/lib/v2/workspace'
+import {
+  getWorkspace,
+  readSite,
+  startWorkspace,
+  workspaceFailure,
+} from '@/lib/v2/workspace'
 
 export const maxDuration = 60
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    return Response.json(await readSite(), {
-      headers: { 'Cache-Control': 'no-store' },
-    })
+    return Response.json(
+      await readSite(
+        new URL(request.url).searchParams.has('designId')
+          ? await getWorkspace(request)
+          : undefined,
+      ),
+      {
+        headers: { 'Cache-Control': 'no-store' },
+      },
+    )
   } catch (error) {
     return workspaceFailure(error)
   }

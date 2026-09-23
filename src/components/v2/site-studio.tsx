@@ -12,6 +12,8 @@ import {
   MicOff,
   MousePointer2,
   Pencil,
+  PanelLeft,
+  Plus,
   Square,
   Trash2,
   Undo2,
@@ -25,6 +27,7 @@ import type {
   ElementTarget,
   SiteAnnotation,
   SiteDocument,
+  Design,
 } from '@/lib/v2/types'
 import { useVoiceAgent } from '../use-voice-agent'
 import { SourceDialog } from './source-dialog'
@@ -34,6 +37,9 @@ const labels = {
   read_selection: 'Looking at your selection',
   bash: 'Working on the website',
 }
+
+const designPath = (path: string, id: string | null) =>
+  id ? `${path}?designId=${encodeURIComponent(id)}` : path
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -47,6 +53,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function SiteStudio() {
   const [site, setSite] = useState<SiteDocument | null>(null)
+  const [designs, setDesigns] = useState<Design[]>([])
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [opening, setOpening] = useState(false)
+  const navigation = useRef(0)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<'browse' | 'select' | 'draw'>('browse')
   const [selection, setSelection] = useState<ElementTarget | null>(null)
@@ -85,8 +95,19 @@ export function SiteStudio() {
   )
 
   const load = useCallback(async () => {
+    const version = navigation.current
     try {
-      setSite(await request<SiteDocument>('/api/v2/site'))
+      const designs = await request<Design[]>('/api/v2/designs')
+      if (version !== navigation.current) return
+      setDesigns(designs)
+      const saved = localStorage.getItem('margin-v2-design')
+      const id =
+        designs.find((design) => design.id === saved)?.id ??
+        designs[0]?.id ??
+        null
+      const site = await request<SiteDocument>(designPath('/api/v2/site', id))
+      if (version !== navigation.current) return
+      setSite(site)
       setError(null)
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
@@ -102,9 +123,11 @@ export function SiteStudio() {
       initializing.current = request<SiteDocument>('/api/v2/site', {
         method: 'POST',
       })
-        .then((site) => {
+        .then(async (site) => {
           snapshot.current.site = site
           setSite(site)
+          if (site.id) localStorage.setItem('margin-v2-design', site.id)
+          setDesigns(await request<Design[]>('/api/v2/designs'))
           return site
         })
         .finally(() => {
@@ -121,22 +144,24 @@ export function SiteStudio() {
 
   const saveDrawing = useCallback(
     async (annotation: SiteAnnotation) => {
+      const version = navigation.current
       setFailedDrawings((previous) =>
         previous.filter((id) => id !== annotation.id),
       )
       try {
         await mutate(async () => {
-          await ensureSite()
+          const site = await ensureSite()
           const annotations = await request<SiteAnnotation[]>(
-            '/api/v2/annotations',
+            designPath('/api/v2/annotations', site.id),
             {
               method: 'POST',
               body: JSON.stringify(annotation),
             },
           )
-          setSite((previous) =>
-            previous ? { ...previous, annotations } : previous,
-          )
+          if (version === navigation.current)
+            setSite((previous) =>
+              previous ? { ...previous, annotations } : previous,
+            )
           setDraftDrawings((previous) =>
             previous.filter((draft) => draft.id !== annotation.id),
           )
@@ -181,13 +206,15 @@ export function SiteStudio() {
       if (name === 'bash')
         return mutate(async () => {
           if (signal.aborted) return { error: 'The voice session has ended.' }
+          const id = snapshot.current.site?.id ?? null
+          const version = navigation.current
           const input = {
             ...bashSchema.parse(args),
             executionId: crypto.randomUUID(),
           }
           let cancellation: Promise<unknown> | undefined
           const cancel = () => {
-            cancellation = request('/api/v2/bash', {
+            cancellation = request(designPath('/api/v2/bash', id), {
               method: 'DELETE',
               body: JSON.stringify({ executionId: input.executionId }),
               keepalive: true,
@@ -206,20 +233,23 @@ export function SiteStudio() {
               stdout: string
               stderr: string
               previewError: string | null
-            }>('/api/v2/bash', {
+            }>(designPath('/api/v2/bash', id), {
               method: 'POST',
               body: JSON.stringify(input),
               signal,
             })
             const { site, ...output } = result
-            if (site) setSite(site)
+            if (site && version === navigation.current) setSite(site)
             return output
           } finally {
             signal.removeEventListener('abort', cancel)
             if (cancellation) {
               await cancellation
               try {
-                setSite(await request<SiteDocument>('/api/v2/site'))
+                const site = await request<SiteDocument>(
+                  designPath('/api/v2/site', id),
+                )
+                if (version === navigation.current) setSite(site)
               } catch {}
             }
             setSaving(false)
@@ -237,6 +267,36 @@ export function SiteStudio() {
     beforeConnect: ensureSite,
     executeTool,
   })
+  const openDesign = async (id: string | null) => {
+    const version = ++navigation.current
+    voice.end()
+    setOpening(true)
+    setSelection(null)
+    setNote('')
+    setNoteOpen(false)
+    setNotesOpen(false)
+    try {
+      await initializing.current?.catch(() => {})
+      await mutations.current.catch(() => {})
+      const site = await request<SiteDocument>(
+        designPath('/api/v2/site', id),
+        id ? {} : { method: 'POST' },
+      )
+      if (version !== navigation.current) return
+      snapshot.current.site = site
+      setSite(site)
+      setDraftDrawings([])
+      setFailedDrawings([])
+      setDesigns(await request<Design[]>('/api/v2/designs'))
+      if (site.id) localStorage.setItem('margin-v2-design', site.id)
+      setError(null)
+    } catch (error) {
+      if (version === navigation.current)
+        setError(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (version === navigation.current) setOpening(false)
+    }
+  }
   const preview = useMemo(
     () => (site ? sitePreview(site.html, window.location.origin) : ''),
     [site?.html],
@@ -320,9 +380,9 @@ export function SiteStudio() {
     }
     setSaving(true)
     try {
-      await ensureSite()
+      const site = await ensureSite()
       const annotations = await mutate(() =>
-        request<SiteAnnotation[]>('/api/v2/annotations', {
+        request<SiteAnnotation[]>(designPath('/api/v2/annotations', site.id), {
           method: 'POST',
           body: JSON.stringify(annotation),
         }),
@@ -343,10 +403,13 @@ export function SiteStudio() {
   const deleteNote = async (id: string) => {
     try {
       const annotations = await mutate(() =>
-        request<SiteAnnotation[]>('/api/v2/annotations', {
-          method: 'DELETE',
-          body: JSON.stringify({ id }),
-        }),
+        request<SiteAnnotation[]>(
+          designPath('/api/v2/annotations', snapshot.current.site?.id ?? null),
+          {
+            method: 'DELETE',
+            body: JSON.stringify({ id }),
+          },
+        ),
       )
       setSite((previous) =>
         previous ? { ...previous, annotations } : previous,
@@ -377,13 +440,23 @@ export function SiteStudio() {
     (annotation) => annotation.drawing,
   )
   return (
-    <main className="v2-studio">
+    <main className="v2-studio" data-sidebar-open={sidebarOpen}>
       <header className="v2-header">
+        <button
+          aria-label="Toggle designs"
+          title="Designs"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+        >
+          <PanelLeft size={17} />
+        </button>
         <a href="/v2" className="v2-brand">
           <span className="v2-mark">Ⅱ</span> margin{' '}
           <span className="v2-version">/ v2</span>
         </a>
-        <span className="v2-file">index.html</span>
+        <span className="v2-file">
+          {designs.find((design) => design.id === site?.id)?.name ??
+            'New design'}
+        </span>
         <div className="v2-header-actions">
           <span className="v2-save-state">
             {saving || savingDrawings ? (
@@ -417,8 +490,36 @@ export function SiteStudio() {
           </button>
         </div>
       </header>
+      {sidebarOpen && (
+        <aside className="v2-designs" aria-label="Designs">
+          <header>
+            <span>Designs</span>
+            <button
+              aria-label="New design"
+              title="New design"
+              disabled={opening}
+              onClick={() => void openDesign(null)}
+            >
+              <Plus size={16} />
+            </button>
+          </header>
+          {designs.map((design) => (
+            <button
+              key={design.id}
+              className="v2-design"
+              aria-current={site?.id === design.id ? 'page' : undefined}
+              disabled={opening}
+              onClick={() => void openDesign(design.id)}
+            >
+              {design.name}
+            </button>
+          ))}
+          {!designs.length && <p>Your designs will appear here.</p>}
+        </aside>
+      )}
       {site ? (
         <iframe
+          key={navigation.current}
           ref={frame}
           className="v2-preview"
           title="Website preview"
@@ -432,6 +533,11 @@ export function SiteStudio() {
           <LoaderCircle className="spin" size={20} />
           <span>Opening your site…</span>
           {error && <button onClick={() => void load()}>Try again</button>}
+        </div>
+      )}
+      {opening && (
+        <div className="v2-opening">
+          <LoaderCircle size={20} className="spin" />
         </div>
       )}
       {notice && (
@@ -533,7 +639,7 @@ export function SiteStudio() {
                 setMode((current) => (current === 'draw' ? 'draw' : 'select'))
                 void voice.start()
               }}
-              disabled={!site}
+              disabled={!site || opening}
             >
               <AudioLines size={18} />
               <span>Talk & annotate</span>

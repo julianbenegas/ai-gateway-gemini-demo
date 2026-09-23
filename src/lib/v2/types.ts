@@ -18,10 +18,13 @@ export type SiteAnnotation = {
 }
 
 export type SiteDocument = {
+  id: string | null
   html: string
   annotations: SiteAnnotation[]
   persisted: boolean
 }
+
+export type Design = { id: string; name: string; createdAt: number }
 
 export type AnnotationPosition = {
   id: string
