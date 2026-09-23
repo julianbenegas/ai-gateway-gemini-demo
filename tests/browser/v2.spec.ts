@@ -65,6 +65,9 @@ function replaceCopy(search: string, replace: string) {
 }
 
 async function drawOnHeading(page: Page) {
+  await expect(
+    page.frameLocator('iframe[title="Website preview"]').locator('html'),
+  ).toHaveAttribute('data-margin-mode', 'draw')
   const heading = page
     .frameLocator('iframe[title="Website preview"]')
     .getByRole('heading', { level: 1 })
@@ -180,7 +183,7 @@ test('v2 owns its session before exposing remote file and voice tools', async ({
   expect((await initial.json()).persisted).toBe(false)
   const write = await request.post('/api/v2/bash', {
     headers,
-    data: { command: 'pwd' },
+    data: { command: 'pwd', executionId: crypto.randomUUID() },
   })
   expect(write.status()).toBe(401)
   const voice = await request.post('/api/v2/realtime', { headers })
@@ -194,6 +197,61 @@ test('v2 owns its session before exposing remote file and voice tools', async ({
     data: { command: 'pwd' },
   })
   expect(foreignBash.status()).toBe(403)
+  const anonymousCancel = await request.delete('/api/v2/bash', {
+    headers,
+    data: { executionId: crypto.randomUUID() },
+  })
+  expect(anonymousCancel.status()).toBe(401)
+  const foreignCancel = await request.delete('/api/v2/bash', {
+    headers: { Origin: 'https://another.example' },
+    data: { executionId: crypto.randomUUID() },
+  })
+  expect(foreignCancel.status()).toBe(403)
+})
+
+test('ending voice explicitly cancels the running remote Bash command', async ({
+  page,
+}) => {
+  await mockFiles(page)
+  const gateway = await mockGateway(page, '**/api/v2/realtime')
+  let executionId: string | undefined
+  let cancelledId: string | undefined
+  let finish: (() => void) | undefined
+  await page.route('**/api/v2/bash', async (route) => {
+    const body = route.request().postDataJSON()
+    if (route.request().method() === 'DELETE') {
+      cancelledId = body.executionId
+      finish?.()
+      await route.fulfill({ json: { cancelled: true } })
+    } else {
+      executionId = body.executionId
+      await new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      await route.abort().catch(() => {})
+    }
+  })
+  await page.goto('/v2')
+  await page
+    .getByRole('button', { name: 'Talk and annotate', exact: true })
+    .click()
+  await expect(
+    page.getByRole('button', { name: 'End voice session' }),
+  ).toBeVisible()
+  gateway.send({
+    type: 'function-call-arguments-done',
+    responseId: 'cancel-response',
+    itemId: 'cancel-item',
+    callId: 'cancel-call',
+    name: 'bash',
+    arguments: JSON.stringify({ command: 'sleep 30' }),
+  })
+  await expect.poll(() => executionId).toBeTruthy()
+  await page.getByRole('button', { name: 'End voice session' }).click()
+  await expect.poll(() => cancelledId).toBe(executionId)
+  await expect(
+    page.getByRole('button', { name: 'Talk and annotate', exact: true }),
+  ).toBeVisible()
 })
 
 test('one click starts voice, notes target DOM elements, and edits reload from the server', async ({

@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { sessionConfig } from '@/lib/realtime-config'
-import { V2_INSTRUCTIONS } from '@/lib/v2/tools'
+import { bashSchema, V2_INSTRUCTIONS } from '@/lib/v2/tools'
 import { sitePreview } from '@/lib/v2/preview'
 import type {
   AnnotationPosition,
@@ -181,6 +181,23 @@ export function SiteStudio() {
       if (name === 'bash')
         return mutate(async () => {
           if (signal.aborted) return { error: 'The voice session has ended.' }
+          const input = {
+            ...bashSchema.parse(args),
+            executionId: crypto.randomUUID(),
+          }
+          let cancellation: Promise<unknown> | undefined
+          const cancel = () => {
+            cancellation = request('/api/v2/bash', {
+              method: 'DELETE',
+              body: JSON.stringify({ executionId: input.executionId }),
+              keepalive: true,
+            }).catch((error) => {
+              setError(
+                `Could not stop the command: ${error instanceof Error ? error.message : String(error)}`,
+              )
+            })
+          }
+          signal.addEventListener('abort', cancel, { once: true })
           setSaving(true)
           try {
             const result = await request<{
@@ -191,13 +208,20 @@ export function SiteStudio() {
               previewError: string | null
             }>('/api/v2/bash', {
               method: 'POST',
-              body: JSON.stringify(args),
+              body: JSON.stringify(input),
               signal,
             })
             const { site, ...output } = result
             if (site) setSite(site)
             return output
           } finally {
+            signal.removeEventListener('abort', cancel)
+            if (cancellation) {
+              await cancellation
+              try {
+                setSite(await request<SiteDocument>('/api/v2/site'))
+              } catch {}
+            }
             setSaving(false)
           }
         })

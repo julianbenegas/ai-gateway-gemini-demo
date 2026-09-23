@@ -2,7 +2,7 @@ import 'server-only'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { Sandbox } from '@vercel/sandbox'
-import { ZodError } from 'zod'
+import { z, ZodError } from 'zod'
 import { V2_STARTER_HTML, prepareHtml } from './html'
 import { annotationSchema, bashSchema } from './tools'
 import type { SiteAnnotation, SiteDocument } from './types'
@@ -11,6 +11,8 @@ const COOKIE = 'margin_v2_session'
 const ROOT = '/vercel/margin'
 const HTML = `${ROOT}/index.html`
 const NOTES = `${ROOT}/annotations.json`
+const COMMANDS = `${ROOT}/.commands`
+const executionSchema = z.object({ executionId: z.uuid() })
 
 export class WorkspaceError extends Error {
   constructor(
@@ -85,7 +87,12 @@ export async function readSite(sandbox?: Sandbox): Promise<SiteDocument> {
 
 export async function runBash(input: unknown, signal: AbortSignal) {
   const { command } = bashSchema.parse(input)
+  const { executionId } = executionSchema.parse(input)
   const sandbox = await getWorkspace()
+  await sandbox.fs.mkdir(COMMANDS, { recursive: true })
+  const cancellation = `${COMMANDS}/${executionId}.cancel`
+  if (await sandbox.readFileToBuffer({ path: cancellation }))
+    throw new WorkspaceError('Command cancelled.', 409)
   const process = await sandbox.runCommand({
     cmd: 'bash',
     args: ['-c', command],
@@ -99,6 +106,9 @@ export async function runBash(input: unknown, signal: AbortSignal) {
   }
   signal.addEventListener('abort', cancel, { once: true })
   try {
+    await atomicWrite(sandbox, `${COMMANDS}/${executionId}`, process.cmdId)
+    if (await sandbox.readFileToBuffer({ path: cancellation }))
+      await process.kill('SIGKILL')
     signal.throwIfAborted()
     const finished = await process.wait({ signal })
     const [stdout, stderr] = await Promise.all([
@@ -120,6 +130,21 @@ export async function runBash(input: unknown, signal: AbortSignal) {
   } finally {
     signal.removeEventListener('abort', cancel)
   }
+}
+
+export async function cancelBash(input: unknown) {
+  const { executionId } = executionSchema.parse(input)
+  const sandbox = await getWorkspace()
+  await sandbox.fs.mkdir(COMMANDS, { recursive: true })
+  await sandbox.fs.writeFile(`${COMMANDS}/${executionId}.cancel`, '1')
+  const commandId = await sandbox.readFileToBuffer({
+    path: `${COMMANDS}/${executionId}`,
+  })
+  if (commandId) {
+    const process = await sandbox.getCommand(commandId.toString('utf8'))
+    if (process.exitCode === null) await process.kill('SIGKILL')
+  }
+  return { cancelled: true }
 }
 
 export async function saveAnnotation(annotation: SiteAnnotation) {
