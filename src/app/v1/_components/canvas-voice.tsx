@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import type { Editor } from 'tldraw'
+import { preferenceCookie } from '@/lib/preferences'
 import { Notice } from '@/ui/notice'
 import { toolLabels, Transcript } from '@/ui/transcript'
 import { VoiceControls } from '@/ui/voice-controls'
@@ -22,10 +23,17 @@ const configuration = {
 } satisfies Experimental_RealtimeSessionConfig
 const labels = toolLabels(canvasTools)
 
-export function CanvasVoice({ editor }: { editor: Editor | null }) {
+export function CanvasVoice({
+  editor,
+  thinking,
+}: {
+  editor: Editor | null
+  thinking: boolean
+}) {
   const voice = useVoiceAgent({
     tokenEndpoint: '/v1/api/realtime',
     configuration,
+    thinking: { initial: thinking, cookie: preferenceCookie.v1.thinking },
     tools: canvasTools,
     context: editor && { editor },
   })
@@ -52,6 +60,7 @@ export function CanvasVoice({ editor }: { editor: Editor | null }) {
         onStart={() => void voice.start()}
         onMute={voice.mute}
         onEnd={voice.end}
+        thinking={voice.thinking}
         transcript={
           voice.messages.length
             ? {

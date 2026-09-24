@@ -6,6 +6,8 @@ const variants = {
   ghost:
     'text-muted hover:bg-shade hover:text-bright aria-pressed:bg-shade aria-pressed:text-bright',
   danger: 'text-muted hover:bg-danger/10 hover:text-danger',
+  toggle:
+    'text-faint hover:bg-shade hover:text-bright aria-pressed:bg-accent/10 aria-pressed:text-accent',
 }
 
 const sizes = {

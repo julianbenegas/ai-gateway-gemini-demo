@@ -1,17 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Asterisk, Plus } from 'lucide-react'
+import { usePathname } from 'next/navigation'
+import { Plus } from 'lucide-react'
 import type { Editor, TLEditorSnapshot, TLPageId } from 'tldraw'
 import { Brand } from '@/ui/brand'
 import { IconButton } from '@/ui/button'
-import { cx } from '@/ui/cx'
 import { Notice } from '@/ui/notice'
 import { SectionLabel } from '@/ui/section-label'
-import { sidebarCookie } from '@/ui/sidebar'
+import { preferenceCookie } from '@/lib/preferences'
+import { SidebarItem } from '@/ui/sidebar-item'
 import { SidebarResizer, useSidebarWidth } from '@/ui/sidebar-resizer'
-import { boardsFromSnapshot } from '../_lib/boards'
+import { boardPath, boardsFromSnapshot } from '../_lib/boards'
 import { CanvasVoice } from './canvas-voice'
 
 // tldraw only runs in the browser. Everything around it renders on the server
@@ -20,19 +21,49 @@ const CanvasEditor = dynamic(() => import('./canvas-editor'), { ssr: false })
 
 export function Workspace({
   snapshot,
+  boardId,
   sidebarWidth: initialWidth,
+  thinking,
 }: {
   snapshot: TLEditorSnapshot | null
+  /** The board in the URL, if any. */
+  boardId: string | null
   sidebarWidth: number
+  /** Whether voice starts with extended thinking. */
+  thinking: boolean
 }) {
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [boards, setBoards] = useState(() => boardsFromSnapshot(snapshot))
+  const [boards, setBoards] = useState(() =>
+    boardsFromSnapshot({ snapshot, boardId }),
+  )
   const [saveError, setSaveError] = useState<string | null>(null)
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth({
-    cookie: sidebarCookie.v1,
+    cookie: preferenceCookie.v1.sidebar,
     initial: initialWidth,
   })
   const page = boards.pages.find((page) => page.id === boards.currentId)
+  // The URL follows the open board. The first update only canonicalizes it;
+  // later ones are board switches, so the back button returns to the last.
+  const pathname = usePathname()
+  const synced = useRef(false)
+  useEffect(() => {
+    if (!editor) return
+    const path = boardPath(boards.currentId)
+    if (window.location.pathname !== path)
+      window.history[synced.current ? 'pushState' : 'replaceState'](
+        null,
+        '',
+        path,
+      )
+    synced.current = true
+  }, [editor, boards.currentId])
+  useEffect(() => {
+    const board = pathname.match(/^\/v1\/([^/]+)$/)?.[1]
+    const id = board && (`page:${board}` as TLPageId)
+    if (editor && id && editor.getPage(id) && id !== editor.getCurrentPageId())
+      editor.setCurrentPage(id)
+  }, [editor, pathname])
+
   const newBoard = () => {
     if (!editor) return
     editor.markHistoryStoppingPoint('new board')
@@ -50,6 +81,7 @@ export function Workspace({
       >
         <CanvasEditor
           snapshot={snapshot}
+          initialBoardId={boards.currentId}
           onReady={setEditor}
           onBoards={setBoards}
           onSaveError={setSaveError}
@@ -73,26 +105,15 @@ export function Workspace({
           className="mt-1 flex min-h-0 flex-col overflow-auto max-sm:order-first max-sm:mt-0 max-sm:flex-row"
         >
           {boards.pages.map((board) => (
-            <button
+            <SidebarItem
               key={board.id}
-              aria-current={board.id === boards.currentId ? 'page' : undefined}
-              onClick={() => editor?.setCurrentPage(board.id as TLPageId)}
-              className={cx(
-                'group flex h-7 shrink-0 items-center gap-1 text-left',
-                board.id === boards.currentId ? 'text-bright' : 'text-dim',
-              )}
-            >
-              <Asterisk
-                size={14}
-                className={cx(
-                  'shrink-0',
-                  board.id === boards.currentId ? 'text-accent' : 'text-faint',
-                )}
-              />
-              <span className="truncate group-hover:underline max-sm:pr-2">
-                {board.name}
-              </span>
-            </button>
+              name={board.name}
+              current={board.id === boards.currentId}
+              onOpen={() => editor?.setCurrentPage(board.id as TLPageId)}
+              onRename={(name) =>
+                editor?.updatePage({ id: board.id as TLPageId, name })
+              }
+            />
           ))}
         </nav>
         <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
@@ -114,7 +135,7 @@ export function Workspace({
           }}
           className="h-7 w-56 min-w-0 cursor-default truncate bg-transparent px-2 font-semibold text-dim -outline-offset-1 outline-accent hover:bg-shade focus:cursor-text focus:bg-accent/5 focus:text-accent focus:outline-2 focus:outline-dashed"
         />
-        <CanvasVoice editor={editor} />
+        <CanvasVoice editor={editor} thinking={thinking} />
         {saveError && (
           <Notice
             tone="error"

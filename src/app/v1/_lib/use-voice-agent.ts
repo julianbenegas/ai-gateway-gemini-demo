@@ -1,7 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
+import { thinkingSessionOptions } from '@/lib/models'
+import { writePreference } from '@/lib/preferences'
 import { realtimeToolDefinitions, type Tools } from '@/lib/tools'
 import { useResponses } from '@/lib/voice/responses'
 import { useVoiceSession } from '@/lib/voice/session'
@@ -13,23 +15,33 @@ import type { NoticeTone } from '@/ui/notice'
 export function useVoiceAgent<Context>({
   tokenEndpoint,
   configuration,
+  thinking: thinkingPreference,
   tools,
   context,
   beforeConnect,
 }: {
   tokenEndpoint: string
+  /** Keep stable, like `tools`. */
   configuration: Experimental_RealtimeSessionConfig
+  /** Extended thinking: whether it starts on, and the cookie that keeps it. */
+  thinking: { initial: boolean; cookie: string }
   tools: Tools<Context>
   context: Context | null
   beforeConnect?: () => Promise<unknown>
 }) {
+  const [thinking, setThinking] = useState(thinkingPreference.initial)
   // Tools run here, in the browser, so their definitions are declared here.
-  const [sessionConfig] = useState(() => ({
-    ...configuration,
-    tools: realtimeToolDefinitions({ tools }),
-  }))
+  const sessionConfig = useMemo(
+    () => ({
+      ...configuration,
+      ...(thinking && thinkingSessionOptions),
+      tools: realtimeToolDefinitions({ tools }),
+    }),
+    [configuration, thinking, tools],
+  )
   const session = useVoiceSession({
-    tokenEndpoint,
+    // The server mints the token for the model the toggle picks.
+    tokenEndpoint: `${tokenEndpoint}?thinking=${thinking ? 'on' : 'off'}`,
     configuration: sessionConfig,
     beforeConnect,
   })
@@ -56,6 +68,18 @@ export function useVoiceAgent<Context>({
       response: response.state,
       activity,
     }),
+    /** The model is chosen when voice connects, so it's fixed during a session. */
+    thinking: {
+      enabled: thinking,
+      locked: session.connected || session.busy,
+      toggle: () => {
+        writePreference({
+          cookie: thinkingPreference.cookie,
+          value: thinking ? 'off' : 'on',
+        })
+        setThinking(!thinking)
+      },
+    },
     start: session.start,
     end: session.end,
     mute: session.mute,

@@ -2,8 +2,8 @@
 
 Voice-first website design with Gemini 3.8 Live through AI Gateway. Each example is a self-contained route, with its own UI, API, auth, and agent loop:
 
-- **`/v1` — canvas.** A tldraw board where websites are shapes. The agent reads the board, edits HTML, and draws with native tldraw shapes. The board is saved to Redis and rendered on the server.
-- **`/v2` — studio.** A single website you point at, draw on, and annotate. The agent edits its `index.html`.
+- **`/v1/<board>` — canvas.** A tldraw board where websites are shapes. The agent reads the board, edits HTML, and draws with native tldraw shapes. The board is saved to Redis and rendered on the server.
+- **`/v2/<design>` — studio.** A website you point at, draw on, and annotate. New designs start empty and the agent writes them.
 
 `/` redirects to `/v1`. Voice is the only way to talk to the agent. There is no chat.
 
@@ -17,7 +17,7 @@ vercel link && vercel env pull .env.local
 pnpm dev
 ```
 
-Realtime voice needs a server-side `AI_GATEWAY_API_KEY` (a `vck_` Gateway key): Gateway will not mint realtime client secrets from OIDC alone. Boards and designs are stored in Upstash Redis via `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or the `UPSTASH_REDIS_REST_*` equivalents). Keep all of these server-only. Without Redis in development, canvas boards fall back to server memory.
+Realtime voice needs a server-side `AI_GATEWAY_API_KEY` (a `vck_` Gateway key): Gateway will not mint realtime client secrets from OIDC alone. Boards and designs are stored in Upstash Redis via `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or the `UPSTASH_REDIS_REST_*` equivalents). Keep all of these server-only. Without Redis in development, or with `MARGIN_STORE=memory`, `lib/redis.ts` uses an in-memory stand-in for the few commands the app runs.
 
 A shell-level `AI_GATEWAY_API_KEY` overrides `.env.local`, so unset it if the dev server should use the project's key.
 
@@ -51,7 +51,7 @@ Styling is Tailwind 4 with tokens in `src/app/globals.css`: Geist Mono and the f
 
 Nothing is injected into the conversation; the agent pulls context through tools.
 
-**Canvas:** `read_board` (layout, selection, and pointer, without HTML), `read_shapes` (full records including HTML), `edit_html` (literal search/replace), `apply_actions` (create, update, arrange, and delete shapes), `inspect_canvas` (screenshot described by `google/gemini-3.8-flash`, because Gateway realtime has no image input).
+**Canvas:** `read_board` (layout, selection, and pointer, without HTML), `read_shapes` (full records including HTML), `edit_html` (literal search/replace), `apply_actions` (create, update, arrange, and delete shapes), `inspect_canvas` (screenshot described by `google/gemini-3.8-flash`). Gemini Live accepts images, but Gateway's realtime adapter rejects them: an image item closes the WebSocket with `1008 WebSocket transform rejected frame`.
 
 **Studio:** `read_selection` (DOM selection, notes, and drawings anchored to elements), `read_html`, `edit_html` (literal search/replace), `write_html` (full rewrite).
 
@@ -70,6 +70,12 @@ A session's state is per instance, but the microphone, the speakers, and Gateway
 
 Gemini transcribes both sides of the conversation (`inputAudioTranscription` and `outputAudioTranscription`). The AI SDK turns the transcripts and tool calls into `messages`, which the transcript toggle next to the voice controls shows as a small chat.
 
+## Extended thinking
+
+The brain toggle next to the voice controls picks the model for the next session: `google/gemini-3.8-live-extended-thinking` with `thinkingLevel: 'low'` (the default), or `google/gemini-3.8-live`. The token route mints for the chosen model (`?thinking=on|off`), and the session config only carries `thinkingConfig` for the thinking model, since Gateway closes the connection when the other model gets one. The choice is fixed while connected and kept in a cookie.
+
+With thinking on, a turn can end while the model keeps reasoning: Gemini reports `interactionStatus: IN_PROGRESS`, goes quiet, then answers and reports `IDLE`. `useResponses` shows Thinking until then.
+
 ## Agent auth
 
 A tool call runs in the user's browser, with the user's cookie, so by itself the API can't tell the agent from the user. The API is the security boundary, not the model or the session: the browser declares the session's tools, and anything in the page can steer the model.
@@ -79,6 +85,8 @@ v2 makes agent calls explicit. Starting voice issues a session grant (`_server/g
 Every agent write keeps the previous HTML, up to 50 versions, and **Undo agent edit** in the header restores it. That keeps prompt injection recoverable: text in the page that talks the model into rewriting it can be undone.
 
 ## Storage
+
+Boards and designs live at their URL. v1 switches boards client-side and keeps the URL in sync with `history.pushState`, so tldraw stays mounted; v2 opens designs with links and creates them with a server action, both of which work before hydration. Preview iframes remount for each new document: changing an iframe's `srcDoc` navigates it, and every navigation would add a browser history entry.
 
 Canvas edits are undoable through tldraw. The canvas saves the whole tldraw snapshot to Redis shortly after each change; the page loads it in a Server Component, so the sidebar, header, and saved sidebar width render before tldraw loads and nothing shifts. Studio designs are one Redis hash each, with separate `html` and `annotations` fields, so a saved note never overwrites a concurrent page edit. Each edit re-adds missing `data-margin-id` attributes so annotations stay attached. Each example scopes its data to the browser with its own `HttpOnly` owner cookie; this is a demo, not an account system.
 

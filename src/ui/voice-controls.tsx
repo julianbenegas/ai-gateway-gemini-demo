@@ -1,5 +1,6 @@
 import {
   AudioLines,
+  Brain,
   LoaderCircle,
   MessageSquareText,
   Mic,
@@ -21,14 +22,28 @@ export type VoiceStatus = {
 }
 
 export function VoiceControls({
+  thinking,
   transcript,
   ...props
 }: Parameters<typeof SessionControls>[0] & {
+  /** A toggle for the model's extended thinking, fixed while connected. */
+  thinking?: { enabled: boolean; locked: boolean; toggle: () => void }
   /** Shows a transcript toggle; pass it once there is something to show. */
   transcript?: { open: boolean; onToggle: () => void }
 }) {
   return (
     <div className="flex items-center gap-0.5">
+      {thinking && (
+        <IconButton
+          label="Extended thinking"
+          aria-pressed={thinking.enabled}
+          disabled={thinking.locked}
+          onClick={thinking.toggle}
+          variant="toggle"
+        >
+          <Brain size={15} />
+        </IconButton>
+      )}
       <SessionControls {...props} />
       {transcript && (
         <IconButton

@@ -907,7 +907,7 @@ test('websites run scripts but cannot read the editor document', async ({
 test('a failed Gateway connection leaves an actionable error and allows retry', async ({
   page,
 }) => {
-  await page.route('**/v1/api/realtime', (route) =>
+  await page.route('**/v1/api/realtime**', (route) =>
     route.fulfill({
       status: 503,
       json: { error: 'No Vercel project is linked' },
@@ -972,4 +972,94 @@ test('the transcript shows both sides of the conversation and tool calls', async
   await expect(transcript).toContainText('Looking at your board')
   await page.getByRole('button', { name: 'Close transcript' }).click()
   await expect(transcript).toHaveCount(0)
+})
+
+test('the open board lives in the URL and the current one renames in place', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await expect(page).toHaveURL(/\/v1\/page$/)
+  await page.getByRole('button', { name: 'New board', exact: true }).click()
+  await expect(page).toHaveURL(/\/v1\/(?!page$)[^/]+$/)
+  const second = page.url()
+  await page.goBack()
+  await expect(page).toHaveURL(/\/v1\/page$/)
+  await expect(
+    page.getByRole('button', { name: 'First ideas', exact: true }),
+  ).toHaveAttribute('aria-current', 'page')
+  await page.getByRole('button', { name: 'First ideas', exact: true }).click()
+  const rename = page.getByRole('textbox', { name: 'Rename First ideas' })
+  await rename.fill('Moodboard')
+  await rename.press('Enter')
+  await expect(
+    page.getByRole('button', { name: 'Moodboard', exact: true }),
+  ).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('textbox', { name: 'Board name' })).toHaveValue(
+    'Moodboard',
+  )
+  await expect
+    .poll(async () =>
+      (await savedRecords(page)).some(
+        (record) => record.typeName === 'page' && record.name === 'Moodboard',
+      ),
+    )
+    .toBe(true)
+  await page.goto(second)
+  await expect(
+    page.getByRole('button', { name: 'Untitled board 2', exact: true }),
+  ).toHaveAttribute('aria-current', 'page')
+  await expect(page.locator('[data-website] iframe')).toHaveCount(0)
+})
+
+test('extended thinking is on by default, fixed during a session, and remembered', async ({
+  page,
+}) => {
+  const tokens: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/v1/api/realtime')) tokens.push(request.url())
+  })
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  const toggle = page.getByRole('button', { name: 'Extended thinking' })
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await connectVoice(page)
+  await expect(toggle).toBeDisabled()
+  expect(tokens.at(-1)).toContain('thinking=on')
+  const session = () =>
+    gateway.sent.findLast((event) => event.type === 'session-update')!
+      .config as any
+  expect(session().providerOptions).toEqual({
+    google: { thinkingConfig: { thinkingLevel: 'low' } },
+  })
+  // Extended thinking ends the turn and keeps reasoning until it's idle.
+  gateway.send({
+    type: 'custom',
+    rawType: 'interactionStatus',
+    raw: { serverContent: { interactionStatus: 'IN_PROGRESS' } },
+  })
+  gateway.send({
+    type: 'response-done',
+    responseId: 'think',
+    status: 'completed',
+  })
+  await expect(page.locator('[data-voice-state]')).toContainText('Thinking')
+  gateway.send({
+    type: 'custom',
+    rawType: 'interactionStatus',
+    raw: { serverContent: { interactionStatus: 'IDLE' } },
+  })
+  gateway.send({
+    type: 'response-done',
+    responseId: 'answer',
+    status: 'completed',
+  })
+  await expect(page.locator('[data-voice-state]')).toContainText('Listening')
+  await page.getByRole('button', { name: 'End voice session' }).click()
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await page.reload()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await connectVoice(page)
+  expect(tokens.at(-1)).toContain('thinking=off')
+  expect(session().providerOptions).toBeUndefined()
 })

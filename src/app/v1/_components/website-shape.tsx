@@ -67,7 +67,9 @@ function Website({ shape }: { shape: WebsiteShape }) {
           {editing && <span className="text-accent"> · live</span>}
         </span>
       </div>
+      {/* A new iframe per document, so edits don't add browser history. */}
       <iframe
+        key={html}
         ref={frame}
         title={shape.props.title}
         srcDoc={html}

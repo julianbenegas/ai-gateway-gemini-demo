@@ -7,31 +7,26 @@ import type { SiteAnnotation } from './types'
 
 const api = rpc<Api>().v2.api
 
-const design = (id: string | null) => {
-  if (!id) throw new Error('Create a design to save changes.')
-  return api.designs({ id })
-}
+const design = (id: string) => api.designs({ id })
 
 /** The user's calls, authorized by the owner cookie. */
 export const studioApi = {
   designs: () => unwrap(api.designs.get()),
-  site: ({ id }: { id: string | null }) =>
-    unwrap(id ? api.designs({ id }).get() : api.starter.get()),
-  createDesign: () => unwrap(api.designs.post()),
-  undoAgentEdit: ({ id }: { id: string | null }) =>
-    unwrap(design(id).undo.post()),
+  renameDesign: ({ id, name }: { id: string; name: string }) =>
+    unwrap(design(id).patch({ name })),
+  undoAgentEdit: ({ id }: { id: string }) => unwrap(design(id).undo.post()),
   saveAnnotation: ({
     id,
     annotation,
   }: {
-    id: string | null
+    id: string
     annotation: SiteAnnotation
   }) => unwrap(design(id).annotations.post(annotation)),
   deleteAnnotation: ({
     id,
     annotationId,
   }: {
-    id: string | null
+    id: string
     annotationId: string
   }) => unwrap(design(id).annotations({ annotationId }).delete()),
   issueGrant: ({ designId }: { designId: string }) =>

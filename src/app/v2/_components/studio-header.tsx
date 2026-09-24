@@ -26,7 +26,7 @@ export function StudioHeader({
   onViewSource,
   onDownload,
 }: {
-  designName: string
+  designName?: string
   status: keyof typeof statusIcons | null
   disabled: boolean
   agentEdits: number

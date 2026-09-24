@@ -1,11 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LoaderCircle } from 'lucide-react'
 import { download } from '@/lib/download'
 import { Button } from '@/ui/button'
 import { Notice } from '@/ui/notice'
-import { sidebarCookie } from '@/ui/sidebar'
+import { preferenceCookie } from '@/lib/preferences'
 import { useSidebarWidth } from '@/ui/sidebar-resizer'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import { sitePreview } from '../_lib/preview'
@@ -17,6 +16,7 @@ import {
 } from '../_lib/tools'
 import { useVoiceAgent } from '../_lib/use-voice-agent'
 import { DesignList } from './design-list'
+import { NewDesign } from './new-design'
 import { NotesPanel } from './notes-panel'
 import { SourceDialog } from './source-dialog'
 import { StudioDock, type StudioMode } from './studio-dock'
@@ -29,7 +29,6 @@ import type {
   SiteDocument,
 } from '../_lib/types'
 
-const LAST_DESIGN = 'margin-v2-design'
 const configuration = {
   instructions: STUDIO_INSTRUCTIONS,
   voice: 'Aoede',
@@ -48,19 +47,30 @@ type PendingQuery = {
   timer: ReturnType<typeof setTimeout>
 }
 
+/**
+ * One design, loaded by the page from its URL. Opening another design is a
+ * navigation, which mounts a fresh studio for it.
+ */
 export function Studio({
+  designs: initialDesigns,
+  site: initialSite,
   sidebarWidth: initialWidth,
+  thinking,
 }: {
+  designs: Design[]
+  /** Null when there are no designs yet. */
+  site: SiteDocument | null
   sidebarWidth: number
+  /** Whether voice starts with extended thinking. */
+  thinking: boolean
 }) {
-  const [site, setSite] = useState<SiteDocument | null>(null)
-  const [designs, setDesigns] = useState<Design[]>([])
+  const [site, setSite] = useState(initialSite)
+  const [designs, setDesigns] = useState(initialDesigns)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth({
-    cookie: sidebarCookie.v2,
+    cookie: preferenceCookie.v2.sidebar,
     initial: initialWidth,
   })
-  const [opening, setOpening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<StudioMode>('browse')
   const [selection, setSelection] = useState<ElementTarget | null>(null)
@@ -82,61 +92,20 @@ export function Studio({
     [site?.annotations, draftDrawings],
   )
 
-  // Refs let async work check what is current without stale closures.
-  const navigation = useRef(0)
+  // Refs let async work read what is current without stale closures.
   const frame = useRef<HTMLIFrameElement>(null)
   const port = useRef<MessagePort | null>(null)
   const snapshot = useRef({ site, mode, selection, annotations })
   snapshot.current = { site, mode, selection, annotations }
-  const initializing = useRef<Promise<SiteDocument> | null>(null)
   const mutations = useRef<Promise<unknown>>(Promise.resolve())
   const queries = useRef(new Map<string, PendingQuery>())
 
   const showSite = (next: SiteDocument) => {
     snapshot.current.site = next
     setSite(next)
-    if (next.id) localStorage.setItem(LAST_DESIGN, next.id)
   }
   const fail = (error: unknown) =>
     setError(error instanceof Error ? error.message : String(error))
-
-  const load = useCallback(async () => {
-    const version = navigation.current
-    try {
-      const designs = await studioApi.designs()
-      if (version !== navigation.current) return
-      setDesigns(designs)
-      const saved = localStorage.getItem(LAST_DESIGN)
-      const id =
-        designs.find((design) => design.id === saved)?.id ??
-        designs[0]?.id ??
-        null
-      const site = await studioApi.site({ id })
-      if (version !== navigation.current) return
-      setSite(site)
-      setError(null)
-    } catch (error) {
-      fail(error)
-    }
-  }, [])
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const ensureSite = useCallback(async () => {
-    if (snapshot.current.site?.persisted) return snapshot.current.site
-    initializing.current ??= studioApi
-      .createDesign()
-      .then(async (site) => {
-        showSite(site)
-        setDesigns(await studioApi.designs())
-        return site
-      })
-      .finally(() => {
-        initializing.current = null
-      })
-    return initializing.current
-  }, [])
 
   const mutate = useCallback(<T,>(task: () => Promise<T>) => {
     const next = mutations.current.catch(() => {}).then(task)
@@ -146,21 +115,18 @@ export function Studio({
 
   const saveDrawing = useCallback(
     async (annotation: SiteAnnotation) => {
-      const version = navigation.current
       setFailedDrawings((previous) =>
         previous.filter((id) => id !== annotation.id),
       )
       try {
         await mutate(async () => {
-          const site = await ensureSite()
           const annotations = await studioApi.saveAnnotation({
-            id: site.id,
+            id: snapshot.current.site!.id,
             annotation,
           })
-          if (version === navigation.current)
-            setSite((previous) =>
-              previous ? { ...previous, annotations } : previous,
-            )
+          setSite((previous) =>
+            previous ? { ...previous, annotations } : previous,
+          )
           setDraftDrawings((previous) =>
             previous.filter((draft) => draft.id !== annotation.id),
           )
@@ -170,7 +136,7 @@ export function Studio({
         fail(error)
       }
     },
-    [ensureSite, mutate],
+    [mutate],
   )
 
   const readSelection = useCallback(
@@ -207,10 +173,11 @@ export function Studio({
     if (current) void agentApi.revoke({ grant: current }).catch(() => {})
   }, [])
   const startSession = useCallback(async () => {
-    const site = await ensureSite()
     revokeGrant()
-    grant.current = (await studioApi.issueGrant({ designId: site.id! })).grant
-  }, [ensureSite, revokeGrant])
+    grant.current = (
+      await studioApi.issueGrant({ designId: snapshot.current.site!.id })
+    ).grant
+  }, [revokeGrant])
 
   const agentEdit = useCallback(
     ({
@@ -225,11 +192,10 @@ export function Studio({
       mutate(async () => {
         if (signal.aborted || !grant.current)
           return { error: 'The voice session has ended.' }
-        const version = navigation.current
         setSaving(true)
         try {
           const { site, matches, missed } = await send(grant.current)
-          if (version === navigation.current) showSite(site)
+          showSite(site)
           return { ok: true, matches, ...(missed && { html: site.html }) }
         } finally {
           setSaving(false)
@@ -262,6 +228,7 @@ export function Studio({
   const voice = useVoiceAgent({
     tokenEndpoint: '/v2/api/realtime',
     configuration,
+    thinking: { initial: thinking, cookie: preferenceCookie.v2.thinking },
     tools: siteTools,
     context: { studio },
     beforeConnect: startSession,
@@ -274,45 +241,27 @@ export function Studio({
 
   const undoAgentEdit = () =>
     mutate(async () => {
-      showSite(
-        await studioApi.undoAgentEdit({
-          id: snapshot.current.site?.id ?? null,
-        }),
-      )
+      showSite(await studioApi.undoAgentEdit({ id: snapshot.current.site!.id }))
     }).catch(fail)
 
-  const openDesign = async (id: string | null) => {
-    const version = ++navigation.current
-    endVoice()
-    setOpening(true)
-    setSelection(null)
-    setNoteOpen(false)
-    setNotesOpen(false)
+  const renameDesign = async ({ id, name }: { id: string; name: string }) => {
+    const previous = designs
+    setDesigns(designs.map((d) => (d.id === id ? { ...d, name } : d)))
     try {
-      await initializing.current?.catch(() => {})
-      await mutations.current.catch(() => {})
-      const site = await (id
-        ? studioApi.site({ id })
-        : studioApi.createDesign())
-      if (version !== navigation.current) return
-      showSite(site)
-      setDraftDrawings([])
-      setFailedDrawings([])
-      setDesigns(await studioApi.designs())
-      setError(null)
+      await studioApi.renameDesign({ id, name })
     } catch (error) {
-      if (version === navigation.current) fail(error)
-    } finally {
-      if (version === navigation.current) setOpening(false)
+      setDesigns(previous)
+      fail(error)
     }
   }
 
+  // The preview document is built in the browser, where DOMParser and the
+  // origin exist; the server renders the frame empty.
+  const [origin, setOrigin] = useState<string | null>(null)
+  useEffect(() => setOrigin(window.location.origin), [])
   const preview = useMemo(
-    () =>
-      site
-        ? sitePreview({ html: site.html, origin: window.location.origin })
-        : '',
-    [site?.html],
+    () => (site && origin ? sitePreview({ html: site.html, origin }) : ''),
+    [site?.html, origin],
   )
 
   const sendState = useCallback(() => {
@@ -388,9 +337,8 @@ export function Studio({
     }
     setSaving(true)
     try {
-      const site = await ensureSite()
       const annotations = await mutate(() =>
-        studioApi.saveAnnotation({ id: site.id, annotation }),
+        studioApi.saveAnnotation({ id: site!.id, annotation }),
       )
       setSite((previous) =>
         previous ? { ...previous, annotations } : previous,
@@ -410,7 +358,7 @@ export function Studio({
     try {
       const annotations = await mutate(() =>
         studioApi.deleteAnnotation({
-          id: snapshot.current.site?.id ?? null,
+          id: snapshot.current.site!.id,
           annotationId: id,
         }),
       )
@@ -444,15 +392,13 @@ export function Studio({
       className="grid h-dvh grid-cols-[var(--sidebar)_1fr] grid-rows-[40px_1fr] max-sm:grid-cols-[0px_1fr]"
     >
       <StudioHeader
-        designName={
-          designs.find((design) => design.id === site?.id)?.name ?? 'New design'
-        }
+        designName={designs.find((design) => design.id === site?.id)?.name}
         status={
           saving || savingDrawings
             ? 'saving'
             : failedDrawings.length
               ? 'failed'
-              : site?.persisted
+              : site
                 ? 'saved'
                 : null
         }
@@ -467,16 +413,17 @@ export function Studio({
         <DesignList
           designs={designs}
           currentId={site?.id ?? null}
-          disabled={opening}
           width={sidebarWidth}
           onResize={setSidebarWidth}
-          onOpen={(id) => void openDesign(id)}
+          onRename={renameDesign}
         />
       )}
       <div className="relative isolate col-start-2 row-start-2 min-h-0 overflow-hidden">
         {site ? (
+          // A new iframe per document: changing an iframe's srcDoc navigates
+          // it, and every navigation would add a browser history entry.
           <iframe
-            key={navigation.current}
+            key={preview}
             ref={frame}
             title="Website preview"
             sandbox="allow-scripts"
@@ -486,18 +433,8 @@ export function Studio({
             className="absolute inset-0 size-full bg-white scheme-light"
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center gap-3 text-faint">
-            <LoaderCircle size={20} className="animate-spin" />
-            {error && (
-              <Button variant="accent" onClick={() => void load()}>
-                Try again
-              </Button>
-            )}
-          </div>
-        )}
-        {opening && (
-          <div className="absolute inset-0 z-10 grid place-items-center bg-background/60 text-faint">
-            <LoaderCircle size={20} className="animate-spin" />
+          <div className="absolute inset-0 grid place-items-center">
+            <NewDesign />
           </div>
         )}
         {notice && (
@@ -529,37 +466,39 @@ export function Studio({
             {notice}
           </Notice>
         )}
-        <StudioDock
-          voice={{ ...voice, end: endVoice }}
-          transcriptOpen={transcriptOpen}
-          onToggleTranscript={() => setTranscriptOpen(!transcriptOpen)}
-          mode={mode}
-          selection={selection}
-          noteOpen={noteOpen}
-          saving={saving}
-          annotationCount={annotations.length}
-          canUndoDrawing={!!lastDrawing && !savingDrawings}
-          disabled={!site || opening}
-          onMode={(next) => {
-            setMode(next)
-            if (next === 'draw') setNoteOpen(false)
-          }}
-          onStartVoice={() => {
-            setMode((current) => (current === 'draw' ? 'draw' : 'select'))
-            void voice.start()
-          }}
-          onClearSelection={() => setSelection(null)}
-          onToggleNote={() => {
-            setMode('select')
-            setNoteOpen(!noteOpen)
-          }}
-          onCloseNote={() => setNoteOpen(false)}
-          onAddNote={addNote}
-          onUndoDrawing={() => {
-            if (lastDrawing) void deleteNote(lastDrawing.id)
-          }}
-          onToggleNotes={() => setNotesOpen(!notesOpen)}
-        />
+        {site && (
+          <StudioDock
+            voice={{ ...voice, end: endVoice }}
+            transcriptOpen={transcriptOpen}
+            onToggleTranscript={() => setTranscriptOpen(!transcriptOpen)}
+            mode={mode}
+            selection={selection}
+            noteOpen={noteOpen}
+            saving={saving}
+            annotationCount={annotations.length}
+            canUndoDrawing={!!lastDrawing && !savingDrawings}
+            disabled={!site}
+            onMode={(next) => {
+              setMode(next)
+              if (next === 'draw') setNoteOpen(false)
+            }}
+            onStartVoice={() => {
+              setMode((current) => (current === 'draw' ? 'draw' : 'select'))
+              void voice.start()
+            }}
+            onClearSelection={() => setSelection(null)}
+            onToggleNote={() => {
+              setMode('select')
+              setNoteOpen(!noteOpen)
+            }}
+            onCloseNote={() => setNoteOpen(false)}
+            onAddNote={addNote}
+            onUndoDrawing={() => {
+              if (lastDrawing) void deleteNote(lastDrawing.id)
+            }}
+            onToggleNotes={() => setNotesOpen(!notesOpen)}
+          />
+        )}
         {notesOpen && (
           <NotesPanel
             annotations={annotations}

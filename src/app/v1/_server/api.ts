@@ -7,6 +7,10 @@ import { VISION_MODEL } from '@/lib/models'
 import { gatewayError, realtimeToken } from '@/lib/realtime'
 import { loadBoard, saveBoard, snapshotSchema } from './board'
 
+const realtimeQuery = z.object({
+  thinking: z.enum(['on', 'off']).default('on'),
+})
+
 const inspectSchema = z.object({
   image: z.string().startsWith('data:image/png;base64,'),
   question: z.string(),
@@ -25,7 +29,11 @@ export const api = new Elysia({ prefix: '/v1/api' })
     },
     { body: snapshotSchema },
   )
-  .post('/realtime', async () => realtimeToken())
+  .post(
+    '/realtime',
+    async ({ query }) => realtimeToken({ thinking: query.thinking === 'on' }),
+    { query: realtimeQuery },
+  )
   .post(
     '/inspect',
     async ({ body, request }) => {

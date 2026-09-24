@@ -12,6 +12,7 @@ import {
   getSnapshot,
   type TLComponents,
   type TLEditorSnapshot,
+  type TLPageId,
   Tldraw,
   toRichText,
   useEditor,
@@ -65,11 +66,14 @@ const themes = {
 /** tldraw itself; client-only because it cannot render on the server. */
 export default function CanvasEditor({
   snapshot,
+  initialBoardId,
   onReady,
   onBoards,
   onSaveError,
 }: {
   snapshot: TLEditorSnapshot | null
+  /** Opened on load when it exists, such as the board in the URL. */
+  initialBoardId: string
   onReady: (editor: Editor) => void
   onBoards: (boards: Boards) => void
   onSaveError: (error: string | null) => void
@@ -78,8 +82,11 @@ export default function CanvasEditor({
     (editor: Editor) => {
       editor.user.updateUserPreferences({ colorScheme: 'system' })
       if (!snapshot) seedFirstBoard(editor)
+      const board = initialBoardId as TLPageId
+      if (editor.getPage(board)) editor.setCurrentPage(board)
       onReady(editor)
     },
+    // Only the first render's board: later URL changes are handled outside.
     [snapshot, onReady],
   )
   return (

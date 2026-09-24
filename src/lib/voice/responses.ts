@@ -24,6 +24,8 @@ export function useResponses({ session }: { session: VoiceSession }) {
   const responses = useRef(new Map<string, ResponseRecord>())
   const answered = useRef(new Set<string>())
   const retried = useRef(false)
+  // Extended thinking ends a turn and keeps reasoning; see interactionStatus.
+  const backgroundThinking = useRef(false)
   const { realtime, setError } = session
 
   useEffect(() => {
@@ -31,6 +33,7 @@ export function useResponses({ session }: { session: VoiceSession }) {
     responses.current.clear()
     answered.current.clear()
     retried.current = false
+    backgroundThinking.current = false
   }, [session.generation])
 
   useEffect(() => {
@@ -45,6 +48,12 @@ export function useResponses({ session }: { session: VoiceSession }) {
     session,
     listener: (event) => {
       const progress = () => (lastProgress.current = Date.now())
+      if (event.type === 'custom' && event.rawType === 'interactionStatus') {
+        const status = (
+          event.raw as { serverContent?: { interactionStatus?: string } }
+        )?.serverContent?.interactionStatus
+        backgroundThinking.current = status === 'IN_PROGRESS'
+      }
       if (
         [
           'response-created',
@@ -110,11 +119,13 @@ export function useResponses({ session }: { session: VoiceSession }) {
         status: event.status,
         raw: event.raw,
       })
-      // A valid tool call means the model continues once it has the result.
+      // A valid tool call means the model continues once it has the result,
+      // and extended thinking keeps reasoning after the turn ends.
       if (
-        response?.valid &&
-        !response.interrupted &&
-        event.status !== 'cancelled'
+        backgroundThinking.current ||
+        (response?.valid &&
+          !response.interrupted &&
+          event.status !== 'cancelled')
       )
         setState('thinking')
       if (

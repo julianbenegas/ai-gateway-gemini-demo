@@ -33,12 +33,14 @@ export function useVoiceSession({
   configuration,
   beforeConnect,
 }: {
+  /**
+   * A new endpoint or config identity creates a new realtime session, so
+   * keep both stable and only change them while disconnected.
+   */
   tokenEndpoint: string
-  /** Read once: a new config identity would recreate the session. */
   configuration: Experimental_RealtimeSessionConfig
   beforeConnect?: () => Promise<unknown>
 }) {
-  const [sessionConfig] = useState(configuration)
   const [error, setError] = useState<string | null>(null)
   const [requestingMic, setRequestingMic] = useState(false)
   // Changes when a connection starts or ends, so attached hooks can reset.
@@ -59,7 +61,7 @@ export function useVoiceSession({
   const realtime = useRealtime({
     model,
     api: { token: tokenEndpoint },
-    sessionConfig,
+    sessionConfig: configuration,
     onEvent: (event) => {
       if (ending.current || !mounted.current) return
       for (const listener of listeners.current) listener(event)

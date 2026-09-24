@@ -18,7 +18,7 @@ import {
   readDesign,
   removeAnnotation,
   saveAnnotation,
-  starterSite,
+  renameDesign,
   undoAgentEdit,
 } from './store'
 
@@ -54,7 +54,6 @@ async function agentEdit({
 export const api = new Elysia({ prefix: '/v2/api' })
   .use(apiDefaults)
   // The user, identified by the owner cookie.
-  .get('/starter', async () => starterSite())
   .get('/designs', async () => listDesigns({ owner: await owner.read() }))
   .post('/designs', async () => createDesign({ owner: await owner.ensure() }))
   .get(
@@ -62,6 +61,15 @@ export const api = new Elysia({ prefix: '/v2/api' })
     async ({ params }) =>
       readDesign({ owner: await requireOwner(), id: params.id }),
     { params: design },
+  )
+  .patch(
+    '/designs/:id',
+    async ({ params, body }) =>
+      renameDesign({ owner: await requireOwner(), id: params.id, ...body }),
+    {
+      params: design,
+      body: z.object({ name: z.string().trim().min(1).max(80) }),
+    },
   )
   .post(
     '/designs/:id/undo',
@@ -88,14 +96,18 @@ export const api = new Elysia({ prefix: '/v2/api' })
     { params: design.extend({ annotationId: z.string() }) },
   )
   // Starting voice: a Gateway token for the session, and a grant for its tools.
-  .post('/realtime', async () => {
-    if (!(await listDesigns({ owner: await owner.read() })).length)
-      throw new HttpError({
-        message: 'Create a design to start voice.',
-        status: 401,
-      })
-    return realtimeToken()
-  })
+  .post(
+    '/realtime',
+    async ({ query }) => {
+      if (!(await listDesigns({ owner: await owner.read() })).length)
+        throw new HttpError({
+          message: 'Create a design to start voice.',
+          status: 401,
+        })
+      return realtimeToken({ thinking: query.thinking === 'on' })
+    },
+    { query: z.object({ thinking: z.enum(['on', 'off']).default('on') }) },
+  )
   .post(
     '/grants',
     async ({ body }) => {

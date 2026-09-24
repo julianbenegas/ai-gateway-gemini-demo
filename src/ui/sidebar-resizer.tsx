@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { writePreference } from '@/lib/preferences'
 import { cx } from './cx'
 import {
   clampSidebar,
@@ -24,7 +25,7 @@ export function useSidebarWidth({
   const resize = (next: number) => {
     const width = clampSidebar(next)
     setWidth(width)
-    document.cookie = `${cookie}=${width}; path=/; max-age=31536000; samesite=lax`
+    writePreference({ cookie, value: String(width) })
   }
   return [width, resize] as const
 }

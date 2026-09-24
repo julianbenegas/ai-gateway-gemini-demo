@@ -5,7 +5,7 @@ import { redis } from '@/lib/redis'
 import { applyReplacements, type Replacement } from '@/lib/replacements'
 import { annotationSchema, type ServerTool } from '../_lib/tools'
 import type { Design, SiteAnnotation, SiteDocument } from '../_lib/types'
-import { prepareHtml, STUDIO_STARTER_HTML } from './html'
+import { BLANK_DESIGN_HTML, prepareHtml } from './html'
 
 /**
  * One Redis hash per design with `html` and `annotations` fields, so saving a
@@ -28,14 +28,6 @@ type HistoryEntry = {
   at: number
 }
 
-export const starterSite = (): SiteDocument => ({
-  id: null,
-  html: STUDIO_STARTER_HTML,
-  annotations: [],
-  persisted: false,
-  agentEdits: 0,
-})
-
 export async function readDesign(ref: DesignRef): Promise<SiteDocument> {
   const [fields, agentEdits] = await Promise.all([
     redis().hmget<{ html: unknown; annotations: unknown }>(
@@ -55,7 +47,6 @@ export async function readDesign(ref: DesignRef): Promise<SiteDocument> {
     id: ref.id,
     html: fields.html,
     annotations: annotations.success ? annotations.data : [],
-    persisted: true,
     agentEdits,
   }
 }
@@ -68,11 +59,7 @@ export async function listDesigns({ owner }: { owner: string | null }) {
   return Object.values(designs ?? {}).sort((a, b) => a.createdAt - b.createdAt)
 }
 
-export async function createDesign({
-  owner,
-}: {
-  owner: string
-}): Promise<SiteDocument> {
+export async function createDesign({ owner }: { owner: string }) {
   const id = randomUUID()
   const count = await redis().hlen(designsKey(owner))
   const design: Design = {
@@ -83,12 +70,32 @@ export async function createDesign({
   await redis()
     .multi()
     .hset(designKey({ owner, id }), {
-      html: STUDIO_STARTER_HTML,
+      html: BLANK_DESIGN_HTML,
       annotations: [],
     })
     .hset(designsKey(owner), { [id]: design })
     .exec()
-  return { ...starterSite(), id, persisted: true }
+  return design
+}
+
+export async function renameDesign({
+  owner,
+  id,
+  name,
+}: DesignRef & { name: string }) {
+  const designs = await redis().hmget<Record<string, Design>>(
+    designsKey(owner),
+    id,
+  )
+  const design = designs?.[id]
+  if (!design)
+    throw new HttpError({
+      message: 'This design could not be found.',
+      status: 404,
+    })
+  const renamed = { ...design, name }
+  await redis().hset(designsKey(owner), { [id]: renamed })
+  return renamed
 }
 
 /** Applies an agent edit, keeping the previous HTML for undo. */

@@ -18,10 +18,9 @@ export type SiteAnnotation = {
 }
 
 export type SiteDocument = {
-  id: string | null
+  id: string
   html: string
   annotations: SiteAnnotation[]
-  persisted: boolean
   /** Agent edits that can still be undone. */
   agentEdits: number
 }

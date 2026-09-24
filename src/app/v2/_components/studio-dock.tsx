@@ -44,6 +44,7 @@ export function StudioDock({
     mute: () => void
     end: () => void
     messages: UIMessage[]
+    thinking: { enabled: boolean; locked: boolean; toggle: () => void }
   }
   transcriptOpen: boolean
   onToggleTranscript: () => void
@@ -109,6 +110,7 @@ export function StudioDock({
           ariaLabel="Talk and annotate"
           onStart={onStartVoice}
           disabled={disabled}
+          thinking={voice.thinking}
           transcript={
             voice.messages.length
               ? { open: transcriptOpen, onToggle: onToggleTranscript }

@@ -1,16 +1,16 @@
 import 'server-only'
 import { gateway } from '@ai-sdk/gateway'
 import { HttpError } from './api'
-import { LIVE_MODEL } from './models'
+import { LIVE_MODEL, LIVE_THINKING_MODEL } from './models'
 
 /**
  * Mints a short-lived browser token for a Gemini Live session. Tools are not
  * part of it: the browser runs them and declares them in its session config.
  */
-export async function realtimeToken() {
+export async function realtimeToken({ thinking }: { thinking: boolean }) {
   try {
     return await gateway.experimental_realtime.getToken({
-      model: LIVE_MODEL,
+      model: thinking ? LIVE_THINKING_MODEL : LIVE_MODEL,
       expiresAfterSeconds: 60,
     })
   } catch (error) {
