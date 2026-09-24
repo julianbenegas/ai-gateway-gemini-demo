@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { type Attention, trackAttention } from '../_lib/attention'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import type { Editor } from 'tldraw'
 import { preferenceCookie } from '@/lib/preferences'
@@ -30,12 +31,20 @@ export function CanvasVoice({
   editor: Editor | null
   thinking: boolean
 }) {
+  // Tracks pointing from page load, so "here" works in the first request too.
+  const [attention, setAttention] = useState<Attention | null>(null)
+  useEffect(() => {
+    if (!editor) return
+    const tracker = trackAttention({ editor })
+    setAttention(tracker)
+    return tracker.stop
+  }, [editor])
   const voice = useVoiceAgent({
     tokenEndpoint: '/v1/api/realtime',
     configuration,
     thinking: { initial: thinking, cookie: preferenceCookie.v1.thinking },
     tools: canvasTools,
-    context: editor && { editor },
+    context: editor && attention && { editor, attention },
   })
   const [transcriptOpen, setTranscriptOpen] = useState(false)
   const { end, showError } = voice

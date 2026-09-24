@@ -1153,3 +1153,50 @@ test('deleting a board from its context menu is undoable, and the last one stays
     page.getByRole('button', { name: 'First ideas', exact: true }),
   ).toBeVisible()
 })
+
+test('read_board tells what the user points at apart from what the agent just changed', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await connectVoice(page)
+  // "Add this here": the agent creates a box.
+  const created = await gateway.call('apply_actions', {
+    actions: [
+      {
+        op: 'create',
+        shape: {
+          id: 'shape:box',
+          type: 'geo',
+          x: -400,
+          y: 0,
+          props: { w: 200, h: 120 },
+        },
+      },
+    ],
+  })
+  expect(created.createdIds).toEqual(['shape:box'])
+  await gateway.call('apply_actions', { actions: [{ op: 'select', ids: [] }] })
+  // Then the user points at the note and at empty canvas: "move this there".
+  const note = page
+    .getByTestId('canvas')
+    .getByText('What if this felt a little more playful?', { exact: true })
+  const box = (await note.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.waitForTimeout(700)
+  const empty = (await page.locator('[data-canvas]').boundingBox())!
+  await page.mouse.move(empty.x + empty.width - 120, empty.y + 140, {
+    steps: 4,
+  })
+  await page.waitForTimeout(700)
+  const board = await gateway.call('read_board', {})
+  const noteId = board.shapes.find((shape: any) => shape.type === 'note').id
+  expect(board.selectedIds).toEqual([])
+  const [there, pointedAt] = board.attention.pointerRests
+  expect(there.shapeId).toBeNull()
+  expect(pointedAt.shapeId).toBe(noteId)
+  expect(pointedAt.secondsAgo).toBeGreaterThan(there.secondsAgo)
+  expect(board.attention.yourChanges).toEqual([
+    expect.objectContaining({ kind: 'created', ids: ['shape:box'] }),
+  ])
+})

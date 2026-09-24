@@ -57,6 +57,10 @@ Nothing is injected into the conversation; the agent pulls context through tools
 
 Realtime tool calls arrive in the browser over the model's WebSocket, so the tools run there. Each example defines them in `_lib/tools.ts` like AI SDK tools, with a label, a zod `input`, and an `execute` typed from it (`lib/tools.ts`). The voice loop declares the session's tool definitions from those inputs, validates every call's name and arguments, and passes `execute` the example's context: the tldraw editor in v1 and the studio's actions in v2. The token route mints only a Gateway token.
 
+## Pointing
+
+On the canvas, "this" and "here" mean whatever the user is pointing at, which changes between requests. Gemini through Gateway doesn't report when the user started or stopped speaking, so v1 keeps the last 30 seconds of attention (`_lib/attention.ts`): where the pointer paused for a moment, on a shape or on empty canvas, selection changes, and the agent's own changes. `read_board` returns them newest first with how long ago each happened. The instructions tell the agent to read the board on every request that points, to take "this" from the selection or the latest pause on a shape and "here" from a pause on empty canvas, and not to assume "this" is what it just made.
+
 ## Voice loop
 
 `lib/voice` holds the pieces, and each example assembles them in `_lib/use-voice-agent.ts`:

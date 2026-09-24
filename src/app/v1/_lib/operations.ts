@@ -13,6 +13,7 @@ import { applyReplacements } from '@/lib/replacements'
 import { unwrap } from '@/lib/rpc'
 import { capturePreview } from './capture'
 import { api } from './rpc'
+import type { Attention } from './attention'
 import type { applySchema, editHtmlSchema } from './schemas'
 
 export function focusCanvas({
@@ -48,7 +49,13 @@ export function describeShape({
   }
 }
 
-export function readBoard({ editor }: { editor: Editor }) {
+export function readBoard({
+  editor,
+  attention,
+}: {
+  editor: Editor
+  attention?: Attention
+}) {
   const shapes = editor.getCurrentPageShapes()
   const selectedIds = editor.getSelectedShapeIds()
   const viewport = editor.getViewportPageBounds()
@@ -77,6 +84,7 @@ export function readBoard({ editor }: { editor: Editor }) {
       .map((shape) => shape.id),
     viewport: viewport.toJson(),
     pointer: editor.inputs.getCurrentPagePoint(),
+    ...(attention && { attention: attention.snapshot() }),
     shapes: shapes.map((shape) =>
       describeShape({ editor, shape, includeHtml: false }),
     ),
