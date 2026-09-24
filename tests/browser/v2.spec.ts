@@ -1,3 +1,5 @@
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { test, expect, type Page } from '@playwright/test'
 import { mockGateway } from './gateway'
 import type { SiteDocument } from '../../src/app/v2/_lib/types'
@@ -736,4 +738,79 @@ test('the preview has a browser toolbar with its own history', async ({
   await expect(heading).toHaveText('About us')
   await expect(address).toHaveValue('/about')
   expect(await page.evaluate(() => history.length)).toBe(browserHistory)
+})
+
+test('the preview can show another port of the sandbox, and come back', async ({
+  page,
+}) => {
+  const { gateway } = await openFixture(page)
+  const toolbar = page.getByRole('group', { name: 'Preview' })
+  const address = toolbar.getByRole('textbox', { name: 'Address' })
+  await expect(address).toHaveAttribute('data-1p-ignore', 'true')
+  await address.fill('/nope')
+  await address.press('Enter')
+  await expect(
+    preview(page).getByText("This page doesn't exist yet."),
+  ).toBeVisible()
+  const portButton = toolbar.getByRole('button', { name: /^Port \d+$/ })
+  const designPort = Number(
+    (await portButton.getAttribute('aria-label'))!.replace('Port ', ''),
+  )
+  await expect(portButton).toHaveText(`localhost:${designPort}`)
+  // Another server, on a port with nothing listening yet.
+  const server = createServer((_, response) =>
+    response.end('<!doctype html><h1>Another server</h1>'),
+  )
+  await new Promise<void>((resolve) => server.listen(0, resolve))
+  const other = (server.address() as AddressInfo).port
+  await new Promise((resolve) => server.close(resolve))
+  await portButton.click()
+  const picker = page.getByRole('dialog', { name: 'Port' })
+  await picker
+    .getByRole('spinbutton', { name: 'Port number' })
+    .fill(String(other))
+  await picker.getByRole('button', { name: 'Open' }).click()
+  await expect(picker).toHaveCount(0)
+  await expect(
+    page.getByText(`Nothing is listening on port ${other} yet.`),
+  ).toBeVisible()
+  await expect(
+    toolbar.getByRole('button', { name: `Port ${other}` }),
+  ).toBeVisible()
+  await expect(address).toHaveValue('/')
+  expect((await gateway.call('read_selection', {})).error).toContain(
+    `shows port ${other}`,
+  )
+  await new Promise<void>((resolve) => server.listen(other, resolve))
+  try {
+    await page.getByRole('button', { name: 'Check again' }).click()
+    const heading = preview(page).getByRole('heading', { level: 1 })
+    await expect(heading).toHaveText('Another server')
+    // It has no bridge, and the preview doesn't expect one there.
+    await page.waitForTimeout(4500)
+    await expect(page.getByText('The page left the website')).toHaveCount(0)
+    await expect(heading).toHaveText('Another server')
+    await toolbar.getByRole('button', { name: `Port ${other}` }).click()
+    await picker.getByRole('button', { name: `port ${designPort}` }).click()
+    await expect(
+      preview(page).getByText("This page doesn't exist yet."),
+    ).toBeVisible()
+    await expect(address).toHaveValue('/nope')
+    await expect(
+      toolbar.getByRole('button', { name: `Port ${designPort}` }),
+    ).toBeVisible()
+    // Showing a page of the design comes back from another port too.
+    await toolbar.getByRole('button', { name: `Port ${designPort}` }).click()
+    await picker
+      .getByRole('spinbutton', { name: 'Port number' })
+      .fill(String(other))
+    await picker.getByRole('spinbutton', { name: 'Port number' }).press('Enter')
+    await expect(heading).toHaveText('Another server')
+    await gateway.call('open_page', { path: 'index.html' })
+    await expect(heading).toContainText('Good spaces.')
+    await expect(address).toHaveValue('/')
+  } finally {
+    server.closeAllConnections()
+    server.close()
+  }
 })

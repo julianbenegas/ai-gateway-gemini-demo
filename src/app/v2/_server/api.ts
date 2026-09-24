@@ -13,7 +13,7 @@ import {
 } from '../_lib/tools'
 import { owner, requireOwner } from './auth'
 import { authorizeAgent, issueGrant, revokeGrant } from './grants'
-import { deletePreview, showPreview } from './preview'
+import { deletePreview, openPort, showPreview } from './preview'
 import {
   createDesign,
   deleteDesign,
@@ -106,6 +106,21 @@ export const api = new Elysia({ prefix: '/v2/api' })
       return showPreview({ designId: site.id, files: site.files })
     },
     { params: design },
+  )
+  // Shows another port of the design's sandbox instead, exposing it first.
+  .post(
+    '/designs/:id/ports',
+    async ({ params, body }) => {
+      const site = await readDesign({
+        owner: await requireOwner(),
+        id: params.id,
+      })
+      return openPort({ designId: site.id, port: body.port })
+    },
+    {
+      params: design,
+      body: z.object({ port: z.number().int().min(1).max(65535) }),
+    },
   )
   .post(
     '/designs/:id/undo',

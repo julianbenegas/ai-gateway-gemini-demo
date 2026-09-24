@@ -2,6 +2,7 @@ import 'server-only'
 import { type ChildProcess, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Sandbox } from '@vercel/sandbox'
@@ -14,6 +15,7 @@ import type { SiteFiles } from '../_lib/files'
  * copy whenever the preview opens or the design changes, so there is nothing
  * to persist, and a sandbox that timed out is created again, with a new URL.
  * The plain Node image boots it in a couple of seconds, without a snapshot.
+ * The preview can also show another port of the sandbox, exposed on demand.
  *
  * With MARGIN_V2_PREVIEW=local, as in the browser tests, the same server runs
  * on this machine instead, one process per design.
@@ -52,14 +54,8 @@ async function startSandboxServer(sandbox: Sandbox) {
 const SWAP =
   'rm -rf site.old; if [ -e site ]; then mv site site.old; fi; mv "$0" site; rm -rf site.old'
 
-async function sandboxPreview({
-  designId,
-  files,
-}: {
-  designId: string
-  files: SiteFiles
-}) {
-  const sandbox = await Sandbox.getOrCreate({
+const openSandbox = (designId: string) =>
+  Sandbox.getOrCreate({
     name: sandboxName(designId),
     image: 'vercel/sandbox/node:24',
     ports: [PORT],
@@ -68,6 +64,15 @@ async function sandboxPreview({
     resume: true,
     onCreate: startSandboxServer,
   })
+
+async function sandboxPreview({
+  designId,
+  files,
+}: {
+  designId: string
+  files: SiteFiles
+}) {
+  const sandbox = await openSandbox(designId)
   const staging = `.margin/site-${randomUUID()}`
   await sandbox.writeFiles(
     Object.entries(files).map(([path, content]) => ({
@@ -82,6 +87,34 @@ async function sandboxPreview({
   if (swap.exitCode !== 0)
     throw new Error(`Updating the preview failed: ${await swap.stderr()}`)
   return { url: sandbox.domain(PORT), port: PORT }
+}
+
+// Exits with 0 if something on the port accepts connections.
+const PROBE = `require('net').connect(Number(process.argv[1]), 'localhost').on('connect', () => process.exit(0)).on('error', () => process.exit(1)).setTimeout(1000, () => process.exit(1))`
+
+const route = (sandbox: Sandbox, port: number) => {
+  try {
+    return sandbox.domain(port)
+  } catch {
+    return null
+  }
+}
+
+async function sandboxPort({
+  designId,
+  port,
+}: {
+  designId: string
+  port: number
+}) {
+  const sandbox = await openSandbox(designId)
+  // The design's server, and the one other port the preview shows.
+  if (!route(sandbox, port)) await sandbox.update({ ports: [PORT, port] })
+  const probe = await sandbox.runCommand({
+    cmd: 'node',
+    args: ['-e', PROBE, String(port)],
+  })
+  return { url: sandbox.domain(port), port, listening: probe.exitCode === 0 }
 }
 
 type LocalServer = { url: string; root: string; process: ChildProcess }
@@ -138,37 +171,75 @@ async function localPreview({
   return { url, port: Number(new URL(url).port) }
 }
 
-// One update per design at a time, so the newest files land last.
-const updates = new Map<string, Promise<unknown>>()
+/** Another port on this machine, as the local stand-in for a sandbox's. */
+async function localPort({ port }: { port: number }) {
+  const listening = await new Promise<boolean>((resolve) => {
+    const socket = connect(port, 'localhost')
+    const done = (result: boolean) => {
+      socket.destroy()
+      resolve(result)
+    }
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+    socket.setTimeout(1000, () => done(false))
+  })
+  return { url: `http://localhost:${port}`, port, listening }
+}
 
-/**
- * Brings the design's preview up to date with its files, starting a server
- * if there is none, and returns the preview's URL and its server's port.
- */
-export function showPreview(options: { designId: string; files: SiteFiles }) {
-  const update = (updates.get(options.designId) ?? Promise.resolve())
+// One sandbox task per design at a time, so the newest files land last.
+const tasks = new Map<string, Promise<unknown>>()
+
+function queue<T>({
+  designId,
+  run,
+  failure,
+}: {
+  designId: string
+  run: () => Promise<T>
+  /** What the user sees if it fails; the log has the cause. */
+  failure: string
+}) {
+  const task = (tasks.get(designId) ?? Promise.resolve())
     .catch(() => {})
-    .then(() => (local() ? localPreview(options) : sandboxPreview(options)))
+    .then(run)
     .catch((error) => {
       console.error(
         'v2 preview failed:',
         error instanceof Error ? error.message : error,
       )
-      throw new HttpError({
-        message:
-          'The preview could not start. Try again; locally, Vercel Sandbox needs a linked Vercel project.',
-        status: 503,
-      })
+      throw new HttpError({ message: failure, status: 503 })
     })
-  updates.set(options.designId, update)
-  void update
+  tasks.set(designId, task)
+  void task
     .finally(() => {
-      if (updates.get(options.designId) === update)
-        updates.delete(options.designId)
+      if (tasks.get(designId) === task) tasks.delete(designId)
     })
     .catch(() => {})
-  return update
+  return task
 }
+
+/**
+ * Brings the design's preview up to date with its files, starting a server
+ * if there is none, and returns the preview's URL and its server's port.
+ */
+export const showPreview = (options: { designId: string; files: SiteFiles }) =>
+  queue({
+    designId: options.designId,
+    run: () => (local() ? localPreview(options) : sandboxPreview(options)),
+    failure:
+      'The preview could not start. Try again; locally, Vercel Sandbox needs a linked Vercel project.',
+  })
+
+/**
+ * Exposes another port of the design's sandbox for the preview to show, and
+ * says whether anything is listening there yet.
+ */
+export const openPort = (options: { designId: string; port: number }) =>
+  queue({
+    designId: options.designId,
+    run: () => (local() ? localPort(options) : sandboxPort(options)),
+    failure: `Port ${options.port} could not be opened.`,
+  })
 
 export async function deletePreview({ designId }: { designId: string }) {
   if (local()) {

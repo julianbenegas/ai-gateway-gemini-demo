@@ -19,6 +19,8 @@ export const studioApi = {
     unwrap(design(id).duplicate.post()),
   undoAgentEdit: ({ id }: { id: string }) => unwrap(design(id).undo.post()),
   showPreview: ({ id }: { id: string }) => unwrap(design(id).preview.post()),
+  openPort: ({ id, port }: { id: string; port: number }) =>
+    unwrap(design(id).ports.post({ port })),
   saveAnnotation: ({
     id,
     annotation,

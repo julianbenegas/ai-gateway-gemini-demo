@@ -58,6 +58,14 @@ const isEmptyDesign = (files: SiteFiles) =>
 // or its sandbox has stopped.
 const CONNECT_TIMEOUT = 4000
 
+type History = { paths: string[]; index: number }
+
+/** A history with a page after its current entry, unless it is that page. */
+const visit = ({ paths, index }: History, path: string): History =>
+  paths[index] === path
+    ? { paths, index }
+    : { paths: [...paths.slice(0, index + 1), path], index: index + 1 }
+
 type PendingQuery = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
@@ -106,7 +114,14 @@ export function Studio({
   const [frame, setFrame] = useState({ key: 0, path: '/' })
   // The preview's own history, for its back and forward buttons. Pages never
   // add to the browser's; see the bridge's link handling.
-  const [history, setHistory] = useState({ paths: ['/'], index: 0 })
+  const [history, setHistory] = useState<History>({ paths: ['/'], index: 0 })
+  // Another port of the sandbox, which the preview can show instead of the
+  // design's server. There's no bridge there, so nothing to select or note.
+  const [otherPort, setOtherPort] = useState<{
+    url: string
+    port: number
+    listening: boolean
+  } | null>(null)
   const [page, setPage] = useState<PreviewPage | null>(null)
   const [mode, setMode] = useState<StudioMode>('browse')
   const [selection, setSelection] = useState<ElementTarget | null>(null)
@@ -130,8 +145,26 @@ export function Studio({
 
   // Refs let async work read what is current without stale closures.
   const port = useRef<MessagePort | null>(null)
-  const snapshot = useRef({ site, page, history, mode, selection, annotations })
-  snapshot.current = { site, page, history, mode, selection, annotations }
+  const snapshot = useRef({
+    site,
+    page,
+    history,
+    otherPort,
+    mode,
+    selection,
+    annotations,
+  })
+  snapshot.current = {
+    site,
+    page,
+    history,
+    otherPort,
+    mode,
+    selection,
+    annotations,
+  }
+  // The design's history, kept while the preview shows another port.
+  const designHistory = useRef<History | null>(null)
   const mutations = useRef<Promise<unknown>>(Promise.resolve())
   const queries = useRef(new Map<string, PendingQuery>())
   const connectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -171,10 +204,28 @@ export function Studio({
     [rejectQueries],
   )
 
-  /** Copies the design's files to its preview, then reloads the page. */
+  const showHistory = useCallback((next: History) => {
+    snapshot.current.history = next
+    setHistory(next)
+  }, [])
+
+  /** Brings the preview back from another port, to where the design was. */
+  const leaveOtherPort = useCallback(() => {
+    if (!snapshot.current.otherPort) return
+    snapshot.current.otherPort = null
+    setOtherPort(null)
+    showHistory(designHistory.current ?? { paths: ['/'], index: 0 })
+    designHistory.current = null
+  }, [showHistory])
+
+  /**
+   * Copies the design's files to its preview, then reloads the page. Agent
+   * edits call it too, so the preview goes back to the design to show them.
+   */
   const updatePreview = useCallback(async () => {
     try {
       setPreview(await studioApi.showPreview({ id: snapshot.current.site!.id }))
+      leaveOtherPort()
       const { paths, index } = snapshot.current.history
       showPage(paths[index])
     } catch (error) {
@@ -182,7 +233,7 @@ export function Studio({
         error: error instanceof Error ? error.message : String(error),
       })
     }
-  }, [showPage])
+  }, [showPage, leaveOtherPort])
   const siteId = site?.id
   useEffect(() => {
     if (siteId) void mutate(updatePreview)
@@ -191,10 +242,29 @@ export function Studio({
   const goBy = (step: number) => {
     const index = history.index + step
     if (index < 0 || index >= history.paths.length) return
-    const next = { ...history, index }
-    snapshot.current.history = next
-    setHistory(next)
+    showHistory({ ...history, index })
     showPage(history.paths[index])
+  }
+
+  /** Shows another port of the sandbox, from its home page. */
+  const openPort = async (next: number) => {
+    if (preview && 'port' in preview && next === preview.port) {
+      await mutate(updatePreview)
+      return
+    }
+    const other = await studioApi.openPort({
+      id: snapshot.current.site!.id,
+      port: next,
+    })
+    if (!snapshot.current.otherPort)
+      designHistory.current = snapshot.current.history
+    snapshot.current.otherPort = other
+    setOtherPort(other)
+    snapshot.current.page = null
+    setPage(null)
+    setSelection(null)
+    showHistory({ paths: ['/'], index: 0 })
+    showPage('/')
   }
 
   const saveDrawing = useCallback(
@@ -226,6 +296,15 @@ export function Studio({
   const readSelection = useCallback(
     () =>
       new Promise<unknown>((resolve, reject) => {
+        const other = snapshot.current.otherPort
+        if (other) {
+          reject(
+            new Error(
+              `The preview shows port ${other.port} instead of the design, so there is no selection to read.`,
+            ),
+          )
+          return
+        }
         if (!port.current) {
           reject(
             new Error(
@@ -343,11 +422,12 @@ export function Studio({
           !Object.hasOwn(await currentFiles(), path)
         )
           throw new Error(`There is no page ${path}.`)
+        leaveOtherPort()
         showPage(pageUrl(path))
         return { ok: true, url: pageUrl(path) }
       },
     }),
-    [readSelection, agentEdit, showPage],
+    [readSelection, agentEdit, showPage, leaveOtherPort],
   )
 
   const voice = useVoiceAgent({
@@ -417,7 +497,7 @@ export function Studio({
   useEffect(sendState, [mode, selection?.id, annotations, page, sendState])
 
   const connectPreview = (frame: HTMLIFrameElement) => {
-    if (!preview || !('url' in preview)) return
+    if (!preview || !('url' in preview) || snapshot.current.otherPort) return
     port.current?.close()
     rejectQueries('The preview updated. Read the selection again if needed.')
     const channel = new MessageChannel()
@@ -446,15 +526,8 @@ export function Studio({
         snapshot.current.page = data.page
         setPage(data.page)
         // A page it didn't load from history, like a link's, is a new entry.
-        const { paths, index } = snapshot.current.history
-        if (paths[index] !== data.page.path) {
-          const next = {
-            paths: [...paths.slice(0, index + 1), data.page.path],
-            index: index + 1,
-          }
-          snapshot.current.history = next
-          setHistory(next)
-        }
+        const next = visit(snapshot.current.history, data.page.path)
+        if (next.index !== snapshot.current.history.index) showHistory(next)
         sendState()
       }
       if (data.type === 'selection') {
@@ -577,6 +650,12 @@ export function Studio({
     (annotation) => annotation.drawing,
   )
   const overlay = 'absolute inset-0 grid place-items-center bg-background'
+  const designServer = preview && 'url' in preview ? preview : null
+  const designPort = designServer?.port ?? null
+  // What the frame shows: the design's server, or a listening other port.
+  const frameServer = otherPort
+    ? otherPort.listening && otherPort
+    : designServer
 
   return (
     <main
@@ -619,33 +698,62 @@ export function Studio({
       <div className="col-start-2 row-start-2 flex min-h-0 flex-col">
         {site && (
           <PreviewToolbar
-            port={preview && 'port' in preview ? preview.port : null}
+            port={otherPort?.port ?? designPort}
+            designPort={designPort}
             path={history.paths[history.index]}
             canGoBack={history.index > 0}
             canGoForward={history.index < history.paths.length - 1}
-            disabled={!preview || !('url' in preview)}
+            disabled={!otherPort && !designServer}
             onBack={() => goBy(-1)}
             onForward={() => goBy(1)}
-            onReload={() => showPage(history.paths[history.index])}
+            onReload={() =>
+              otherPort && !otherPort.listening
+                ? void openPort(otherPort.port).catch(fail)
+                : showPage(history.paths[history.index])
+            }
             onNavigate={showPage}
+            onOpenPort={openPort}
           />
         )}
         <div className="relative isolate min-h-0 flex-1 overflow-hidden">
           {site ? (
             <>
-              {preview && 'url' in preview && (
+              {frameServer && (
                 <iframe
                   key={frame.key}
                   title="Website preview"
                   sandbox="allow-scripts allow-same-origin"
                   referrerPolicy="no-referrer"
-                  src={new URL(frame.path, preview.url).href}
+                  src={new URL(frame.path, frameServer.url).href}
                   onLoad={(event) => connectPreview(event.currentTarget)}
                   className="absolute inset-0 size-full bg-white scheme-light"
                 />
               )}
               {/* The page stays mounted underneath so the agent's tools work. */}
-              {isEmptyDesign(site.files) ? (
+              {otherPort ? (
+                !otherPort.listening && (
+                  <div className={overlay}>
+                    <div className="flex flex-col items-center gap-3 text-center">
+                      <p className="max-w-80 text-dim">
+                        Nothing is listening on port {otherPort.port} yet.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="accent"
+                          onClick={() =>
+                            void openPort(otherPort.port).catch(fail)
+                          }
+                        >
+                          Check again
+                        </Button>
+                        <Button onClick={() => void mutate(updatePreview)}>
+                          Back to port {designPort}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              ) : isEmptyDesign(site.files) ? (
                 <div className={overlay}>
                   <EmptyState title="Empty design">
                     Press Talk and describe a website.
