@@ -19,3 +19,6 @@ async function events(request: Request) {
 
 export const GET = events
 export const POST = events
+
+// Agent work started by a push runs after the response, up to this long.
+export const maxDuration = 300

@@ -26,6 +26,9 @@ importers:
       '@upstash/redis':
         specifier: 1.39.0
         version: 1.39.0
+      '@vercel/queue':
+        specifier: ^0.6.0
+        version: 0.6.0
       '@vercel/sandbox':
         specifier: ^3.3.0
         version: 3.3.0
@@ -40,7 +43,7 @@ importers:
         version: 1.2.6
       experimental-a2:
         specifier: ^0.16.0
-        version: 0.16.0(ai@7.0.109(zod@4.6.5))(react@19.3.0)
+        version: 0.16.0(@vercel/queue@0.6.0)(ai@7.0.109(zod@4.6.5))(react@19.3.0)
       file-type:
         specifier: 22.1.1
         version: 22.1.1
@@ -1545,6 +1548,15 @@ packages:
     resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
     engines: {node: '>= 20'}
 
+  '@vercel/queue@0.6.0':
+    resolution: {integrity: sha512-Le0A3ldZhnItV5f6zO101aBCL/Zty0RURD7b+RDA8+p6fuBhsiA2vSimbA2OysEIXYTEhANokGaSJrV6m7qpxw==}
+    engines: {node: '>=20.0.0'}
+    peerDependencies:
+      '@opentelemetry/api': ^1.0.0
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
+
   '@vercel/sandbox@3.3.0':
     resolution: {integrity: sha512-TclqRD2joExyECTrrHsioi3Onw20X2YfpOYEzs3JpJUtAjOKYw2bMeXldKrUg+TB/TT7tPdDu8uKNxj9NE7QUg==}
 
@@ -1575,6 +1587,10 @@ packages:
       react-native-b4a:
         optional: true
 
+  balanced-match@4.0.4:
+    resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
+    engines: {node: 18 || 20 || >=22}
+
   bare-events@2.9.2:
     resolution: {integrity: sha512-AIPKioV7/Y/8KfZ3AAhjPJxLLbY49S64Ym5DakZlUg75qQiTgUq9hEJoEwa4eUezPUlXRy/i5NpsKvo9jgKmoA==}
     peerDependencies:
@@ -1587,6 +1603,10 @@ packages:
     resolution: {integrity: sha512-gMmEShwwq7FJqMwvfRwvCl00v4kN+KOfJqXn+f4nrufak5gNHJOksd/60Dvjuz7sI8Y5WiSFBa8FEYr+zoyqCw==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  brace-expansion@5.0.12:
+    resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
+    engines: {node: 20 || >=22}
 
   caniuse-lite@1.0.30001810:
     resolution: {integrity: sha512-TITQPUkaz+aVk5GL6NhOdwk1aEaNTSDPsGFWrTuhKGtjTF70jL/Oht2W4c6rXUe5fu7Ie19VIahAXHIIiWWNeg==}
@@ -1858,6 +1878,14 @@ packages:
 
   memoirist@0.4.0:
     resolution: {integrity: sha512-zxTgA0mSYELa66DimuNQDvyLq36AwDlTuVRbnQtB+VuTcKWm5Qc4z3WkSpgsFWHNhexqkIooqpv4hdcqrX5Nmg==}
+
+  minimatch@10.2.6:
+    resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
+    engines: {node: 18 || 20 || >=22}
+
+  mixpart@0.0.6:
+    resolution: {integrity: sha512-CRdXtgfQH2jARmtNmPR0Q7jL20fiESbaYk1b0KvLD0jCdUuemepREtsbd8nbiY6BHV9OGGddAZITNXklupUPUQ==}
+    engines: {node: '>=20.0.0'}
 
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
@@ -3638,6 +3666,13 @@ snapshots:
 
   '@vercel/oidc@3.2.0': {}
 
+  '@vercel/queue@0.6.0':
+    dependencies:
+      '@vercel/oidc': 3.2.0
+      minimatch: 10.2.6
+      mixpart: 0.0.6
+      picocolors: 1.1.1
+
   '@vercel/sandbox@3.3.0':
     dependencies:
       '@vercel/oidc': 3.2.0
@@ -3677,9 +3712,15 @@ snapshots:
 
   b4a@1.9.0: {}
 
+  balanced-match@4.0.4: {}
+
   bare-events@2.9.2: {}
 
   baseline-browser-mapping@2.11.25: {}
+
+  brace-expansion@5.0.12:
+    dependencies:
+      balanced-match: 4.0.4
 
   caniuse-lite@1.0.30001810: {}
 
@@ -3738,8 +3779,9 @@ snapshots:
 
   exact-mirror@1.2.6: {}
 
-  experimental-a2@0.16.0(ai@7.0.109(zod@4.6.5))(react@19.3.0):
+  experimental-a2@0.16.0(@vercel/queue@0.6.0)(ai@7.0.109(zod@4.6.5))(react@19.3.0):
     optionalDependencies:
+      '@vercel/queue': 0.6.0
       ai: 7.0.109(zod@4.6.5)
       react: 19.3.0
 
@@ -3856,6 +3898,12 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
 
   memoirist@0.4.0: {}
+
+  minimatch@10.2.6:
+    dependencies:
+      brace-expansion: 5.0.12
+
+  mixpart@0.0.6: {}
 
   ms@2.1.3: {}
 

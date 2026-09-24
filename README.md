@@ -27,6 +27,6 @@ Set `AI_GATEWAY_API_KEY` to an AI Gateway API key. To keep boards and designs ac
 node --env-file=.env.local scripts/v3-desktop-snapshot.mjs
 ```
 
-The desktop follows [vercel-labs/ai-sdk-computer-use](https://github.com/vercel-labs/ai-sdk-computer-use), and the agent's conversation is a durable [a2](https://www.a2.dev) session.
+The desktop follows [vercel-labs/ai-sdk-computer-use](https://github.com/vercel-labs/ai-sdk-computer-use), and the agent's conversation is a durable [a2](https://www.a2.dev) session whose work runs through [Vercel Queues](https://vercel.com/docs/queues), so it continues past the request that started it.
 
 The canvas uses the [tldraw SDK](https://tldraw.dev), which needs a license key on production domains.

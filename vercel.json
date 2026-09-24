@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "src/app/v3/api/scheduler/route.ts": {
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "margin-v3",
+          "retryAfterSeconds": 30
+        }
+      ]
+    }
+  }
+}

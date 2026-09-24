@@ -4,6 +4,7 @@ import { handlerContext } from 'experimental-a2/ai'
 import { createAgentServer } from 'experimental-a2/ai/server'
 import type { A2Store } from 'experimental-a2/server'
 import { memory } from 'experimental-a2/store-memory'
+import { vercelQueues } from 'experimental-a2/scheduler-vercel'
 import { redisHttp } from 'experimental-a2/store-redis-http'
 import { z } from 'zod'
 import { CODING_MODEL } from '@/lib/models'
@@ -16,6 +17,9 @@ const INSTRUCTIONS = `You are a coding agent with your own Linux computer: an Ub
 - Every screen action returns a new screenshot. Look at it before the next action, and don't claim something happened unless you saw it.
 - To open a page in Chrome, press ctrl+l, type the URL, and press Return.
 - Keep replies short and in plain text, without Markdown: what you did, and what you saw.`
+
+// Added for a request that voice mode delegated.
+const DELEGATED = `This request comes from voice mode. The user is talking out loud with a voice assistant, which wrote this task for you from the conversation, so its wording is the assistant's, not the user's. The assistant waits for your reply and tells the user the gist in a sentence or two. Do the work, then reply with the outcome first: what now works or what you found, plus anything the user must decide. If the task is unclear, reply with the question instead of guessing.`
 
 // Next.js may load this module more than once in development, as the page
 // and the events route, so the in-memory store lives on globalThis.
@@ -143,7 +147,8 @@ const tools = {
       'Run a shell command in /vercel/sandbox. Files persist between commands. Background long-running servers.',
     inputSchema: z.object({
       command: z.string().min(1),
-      timeoutSeconds: z.number().int().min(1).max(600).default(120),
+      // Within one function invocation; see maxDuration on the routes.
+      timeoutSeconds: z.number().int().min(1).max(240).default(120),
     }),
     execute: async ({ command, timeoutSeconds }) =>
       bash({
@@ -157,11 +162,24 @@ const tools = {
 
 const store = createStore()
 
+/**
+ * Wakes agent work in a fresh invocation when the one that started it ends,
+ * and recovers from crashed ones. Locally, @vercel/queue sends to the real
+ * service with the OIDC token and delivers in-process.
+ */
+export const scheduler = vercelQueues({ topic: 'margin-v3' })
+
 export const agentServer = createAgentServer({
   ...(store && { store }),
+  scheduler,
   agent: appAgent,
   model: CODING_MODEL,
-  instructions: INSTRUCTIONS,
+  // The request that started this turn is the latest user message.
+  instructions: ({ messages }) =>
+    messages.findLast((message) => message.role === 'user')?.metadata?.via ===
+    'voice'
+      ? `${INSTRUCTIONS}\n\n${DELEGATED}`
+      : INSTRUCTIONS,
   tools,
   maxSteps: 80,
 })
