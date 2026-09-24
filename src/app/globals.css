@@ -51,6 +51,13 @@
   }
 }
 
+/* forums.basehub.com's dotted drop shadow, as a CSS grid of dots. */
+@utility dot-grid {
+  background-image: radial-gradient(#404040 1.5px, transparent 1.75px);
+  background-size: 16px 16px;
+  background-position: 4px 4px;
+}
+
 @utility dashed-line {
   height: 1px;
   background: linear-gradient(to right, transparent 50%, var(--faint) 50%);

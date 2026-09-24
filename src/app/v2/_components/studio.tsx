@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { download } from '@/lib/download'
 import { Button } from '@/ui/button'
+import { ConfirmDialog } from '@/ui/dialog'
 import { EmptyState } from '@/ui/empty-state'
 import { Notice } from '@/ui/notice'
 import { preferenceCookie } from '@/lib/preferences'
@@ -259,18 +260,17 @@ export function Studio({
       fail(error)
     }
   }
-  // Permanent, unlike agent edits, so it asks first.
-  const deleteDesign = async ({ id, name }: { id: string; name: string }) => {
-    if (!window.confirm(`Delete ${name}? This can't be undone.`)) return
+  // Permanent, unlike agent edits, so it asks first; see the ConfirmDialog.
+  const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(
+    null,
+  )
+  const deleteDesign = async ({ id }: { id: string }) => {
     const current = id === site?.id
     if (current) endVoice()
-    try {
-      await studioApi.deleteDesign({ id })
-      if (current) router.push('/v2')
-      else setDesigns((designs) => designs.filter((d) => d.id !== id))
-    } catch (error) {
-      fail(error)
-    }
+    await studioApi.deleteDesign({ id })
+    setDeleting(null)
+    if (current) router.push('/v2')
+    else setDesigns((designs) => designs.filter((d) => d.id !== id))
   }
   const renameDesign = async ({ id, name }: { id: string; name: string }) => {
     const previous = designs
@@ -445,7 +445,7 @@ export function Studio({
           onResize={setSidebarWidth}
           onRename={renameDesign}
           onDuplicate={duplicateDesign}
-          onDelete={deleteDesign}
+          onDelete={setDeleting}
         />
       )}
       <div className="relative isolate col-start-2 row-start-2 min-h-0 overflow-hidden">
@@ -551,6 +551,16 @@ export function Studio({
           />
         )}
       </div>
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete ${deleting.name}`}
+          confirmLabel="Delete"
+          onConfirm={() => deleteDesign(deleting)}
+          onClose={() => setDeleting(null)}
+        >
+          This permanently deletes the design, with its notes and edit history.
+        </ConfirmDialog>
+      )}
       {sourceOpen && site && (
         <SourceDialog
           html={site.html}

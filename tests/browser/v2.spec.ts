@@ -497,19 +497,28 @@ test('duplicating a design copies its page into a new design', async ({
 test('deleting a design asks first and opens another one', async ({ page }) => {
   const { id: first } = await openFixture(page)
   const second = await createDesign(page)
-  page.once('dialog', (dialog) => dialog.dismiss())
-  await page
-    .getByRole('button', { name: 'Design 2', exact: true })
-    .click({ button: 'right' })
-  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  const openDelete = async (name: string) => {
+    await page
+      .getByRole('button', { name, exact: true })
+      .click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+    return page.getByRole('dialog', { name: `Delete ${name}` })
+  }
+  const dialog = await openDelete('Design 2')
+  await expect(dialog).toContainText('permanently deletes')
+  await expect(dialog.getByRole('button', { name: 'Delete' })).toBeFocused()
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toHaveCount(0)
+  await (await openDelete('Design 2')).press('Escape')
+  await expect(dialog).toHaveCount(0)
   await expect(
     page.getByRole('button', { name: 'Design 2', exact: true }),
   ).toBeVisible()
-  page.once('dialog', (dialog) => dialog.accept())
-  await page
-    .getByRole('button', { name: 'Design 2', exact: true })
-    .click({ button: 'right' })
-  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await (
+    await openDelete('Design 2')
+  )
+    .getByRole('button', { name: 'Delete' })
+    .click()
   await page.waitForURL(new RegExp(`/v2/${first}$`))
   await expect(
     page.getByRole('button', { name: 'Design 1', exact: true }),
@@ -520,11 +529,11 @@ test('deleting a design asks first and opens another one', async ({ page }) => {
   expect((await page.request.get(`/v2/api/designs/${second}`)).status()).toBe(
     404,
   )
-  page.once('dialog', (dialog) => dialog.accept())
-  await page
-    .getByRole('button', { name: 'Design 1', exact: true })
-    .click({ button: 'right' })
-  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await (
+    await openDelete('Design 1')
+  )
+    .getByRole('button', { name: 'Delete' })
+    .click()
   await page.waitForURL(/\/v2$/)
   await expect(page.getByText('No designs')).toBeVisible()
 })

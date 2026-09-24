@@ -2,6 +2,7 @@ import type { ComponentProps } from 'react'
 import { cx } from './cx'
 
 const variants = {
+  primary: 'bg-accent text-white hover:bg-accent/90',
   accent: 'bg-accent/10 text-accent hover:bg-accent/20',
   ghost:
     'text-muted hover:bg-shade hover:text-bright aria-pressed:bg-shade aria-pressed:text-bright',
@@ -13,6 +14,7 @@ const variants = {
 const sizes = {
   sm: 'h-6 px-1.5 text-xs',
   md: 'h-7 px-2.5',
+  lg: 'h-9 px-3',
   icon: 'size-7',
   'icon-sm': 'size-6',
 }

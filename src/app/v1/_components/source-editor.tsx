@@ -1,10 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Code2, X } from 'lucide-react'
 import type { Editor } from 'tldraw'
-import { Button, IconButton } from '@/ui/button'
-import { Dialog, DialogFooter, DialogHeader, sourceTextarea } from '@/ui/dialog'
+import { Button } from '@/ui/button'
+import { Dialog, DialogActions, sourceTextarea } from '@/ui/dialog'
 import type { WebsiteShape } from './website-shape'
 
 export function SourceEditor({
@@ -41,47 +40,43 @@ export function SourceEditor({
     onClose()
   }
   return (
-    <Dialog label="Website source" onClose={onClose}>
-      <DialogHeader>
-        <Code2 size={16} className="text-faint" />
+    <Dialog title="Source" size="lg" onClose={onClose}>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 p-6 pt-10">
         <input
           aria-label="Website title"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          className="min-w-0 flex-1 bg-transparent py-1 outline-none"
+          className="h-9 shrink-0 bg-shade px-3 text-dim -outline-offset-1 outline-accent focus:outline-2 focus:outline-dashed"
         />
-        <IconButton label="Close source editor" onClick={onClose}>
-          <X size={16} />
-        </IconButton>
-      </DialogHeader>
-      <textarea
-        aria-label="Website HTML"
-        value={html}
-        onChange={(event) => setHtml(event.target.value)}
-        spellCheck={false}
-        autoFocus
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') save()
-        }}
-        className={sourceTextarea}
-      />
-      {error && (
-        <div
-          role="alert"
-          className="bg-danger/10 px-4 py-2 text-xs text-danger"
-        >
-          {error}
-        </div>
-      )}
-      <DialogFooter>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="accent" onClick={save}>
-          Apply changes
-          <kbd aria-hidden className="text-xs text-accent/60">
-            ⌘↵
-          </kbd>
-        </Button>
-      </DialogFooter>
+        <textarea
+          aria-label="Website HTML"
+          value={html}
+          onChange={(event) => setHtml(event.target.value)}
+          spellCheck={false}
+          data-autofocus
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter')
+              save()
+          }}
+          className={sourceTextarea}
+        />
+        {error && (
+          <p role="alert" className="text-danger">
+            {error}
+          </p>
+        )}
+        <DialogActions>
+          <Button variant="accent" size="lg" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="lg" onClick={save}>
+            Apply changes
+            <kbd aria-hidden className="text-xs text-white/70">
+              ⌘↵
+            </kbd>
+          </Button>
+        </DialogActions>
+      </div>
     </Dialog>
   )
 }

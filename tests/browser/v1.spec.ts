@@ -1101,17 +1101,14 @@ test('typed messages go to the live session from the transcript', async ({
   await input.press('Enter')
   await expect(input).toHaveValue('')
   await expect(page.locator('[data-website] iframe')).toHaveCount(1)
+  // The fake microphone keeps streaming, so skip audio between the events.
+  const typed = () =>
+    gateway.sent
+      .filter((event) => event.type !== 'input-audio-append')
+      .map((event: any) => event.item?.text ?? event.type)
   await expect
-    .poll(() =>
-      gateway.sent.some(
-        (event: any) =>
-          event.type === 'conversation-item-create' &&
-          event.item?.type === 'text-message' &&
-          event.item.text === 'Make the heading red',
-      ),
-    )
-    .toBe(true)
-  expect(gateway.sent.at(-1)).toMatchObject({ type: 'response-create' })
+    .poll(() => typed().slice(-2))
+    .toEqual(['Make the heading red', 'response-create'])
   await expect(
     page
       .getByRole('region', { name: 'Transcript' })

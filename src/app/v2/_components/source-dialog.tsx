@@ -1,8 +1,8 @@
 'use client'
 
-import { Download, X } from 'lucide-react'
-import { Button, IconButton } from '@/ui/button'
-import { Dialog, DialogFooter, DialogHeader, sourceTextarea } from '@/ui/dialog'
+import { Download } from 'lucide-react'
+import { Button } from '@/ui/button'
+import { Dialog, DialogActions, sourceTextarea } from '@/ui/dialog'
 
 export function SourceDialog({
   html,
@@ -14,27 +14,23 @@ export function SourceDialog({
   onDownload: () => void
 }) {
   return (
-    <Dialog label="Website source" onClose={onClose}>
-      <DialogHeader>
-        <span className="flex-1">index.html</span>
-        <IconButton label="Close website source" onClick={onClose}>
-          <X size={16} />
-        </IconButton>
-      </DialogHeader>
-      <textarea
-        aria-label="Website HTML source"
-        readOnly
-        value={html}
-        spellCheck={false}
-        autoFocus
-        className={sourceTextarea}
-      />
-      <DialogFooter>
-        <Button variant="accent" onClick={onDownload}>
-          <Download size={14} />
-          Download
-        </Button>
-      </DialogFooter>
+    <Dialog title="index.html" size="lg" onClose={onClose}>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 p-6 pt-10">
+        <textarea
+          aria-label="Website HTML source"
+          readOnly
+          value={html}
+          spellCheck={false}
+          data-autofocus
+          className={sourceTextarea}
+        />
+        <DialogActions>
+          <Button variant="primary" size="lg" onClick={onDownload}>
+            <Download size={14} />
+            Download
+          </Button>
+        </DialogActions>
+      </div>
     </Dialog>
   )
 }
