@@ -10,9 +10,11 @@ export const preferenceCookie = {
   v3: { sidebar: 'margin_v3_sidebar', thinking: 'margin_v3_thinking' },
 } as const
 
-/** The saved thinking level; low by default. */
-export const readThinkingLevel = (value: string | undefined): ThinkingLevel =>
-  thinkingLevels.find((level) => level === value) ?? 'low'
+/** The saved thinking level, or the example's default. */
+export const readThinkingLevel = (
+  value: string | undefined,
+  fallback: ThinkingLevel = 'low',
+): ThinkingLevel => thinkingLevels.find((level) => level === value) ?? fallback
 
 /** Browser-only. */
 export function writePreference({

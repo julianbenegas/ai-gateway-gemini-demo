@@ -12,7 +12,13 @@ export const SCREEN = { width: 1280, height: 800 }
 const DISPLAY = { DISPLAY: ':99' }
 const OUTPUT_LIMIT = 32 * 1024
 
-const sandboxName = (appId: string) => `margin-v3-${appId}`
+// Local runs and deployments share the project's sandboxes, so each name
+// says where it came from.
+const scope =
+  process.env.MARGIN_STORE === 'memory'
+    ? 'test'
+    : (process.env.VERCEL_ENV ?? 'local')
+const sandboxName = (appId: string) => `margin-v3-${scope}-${appId}`
 
 async function boot(sandbox: Sandbox) {
   await sandbox.runCommand({

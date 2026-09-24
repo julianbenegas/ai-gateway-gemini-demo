@@ -27,8 +27,11 @@ export default async function Page({
     sidebarWidth: clampSidebar(
       Number(cookieStore.get(preferenceCookie.v3.sidebar)?.value),
     ),
+    // Voice here only routes work to the agent. Extended thinking holds a
+    // second tool call until the first returns, so follow-ups can't steer.
     thinking: readThinkingLevel(
       cookieStore.get(preferenceCookie.v3.thinking)?.value,
+      'none',
     ),
   }
   const apps = await listApps({ owner: current })

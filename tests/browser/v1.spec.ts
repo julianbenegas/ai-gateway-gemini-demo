@@ -229,6 +229,45 @@ test('a long thinking silence shows a waiting notice that clears on progress', a
   await expect(page.locator('[data-voice-state]')).toContainText('Listening')
 })
 
+test('the waiting notice ignores silence while a tool runs', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  // Hold the vision request, as a slow tool.
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let requested = false
+  await page.route('**/v1/api/inspect', async (route) => {
+    requested = true
+    await held
+    await route.fulfill({ json: { observation: 'A website.' } })
+  })
+  await openWorkspace(page)
+  await connectVoice(page)
+  gateway.send({
+    type: 'function-call-arguments-done',
+    responseId: 'slow',
+    itemId: 'item-slow',
+    callId: 'call-slow',
+    name: 'inspect_canvas',
+    arguments: '{}',
+  })
+  await expect.poll(() => requested).toBe(true)
+  await page.clock.install()
+  // Gemini stays in progress while it waits on a non-blocking tool.
+  gateway.send({
+    type: 'custom',
+    rawType: 'interactionStatus',
+    raw: { serverContent: { interactionStatus: 'IN_PROGRESS' } },
+  })
+  await page.clock.fastForward(50000)
+  await expect(page.locator('[data-notice][data-tone="error"]')).toHaveCount(0)
+  release()
+  await expect.poll(() => gateway.outputs.has('call-slow')).toBe(true)
+  await page.clock.fastForward(50000)
+  await expect(page.locator('[data-notice]')).toContainText('Still waiting')
+})
+
 test('known shapes remain editable when the visible board and selection change', async ({
   page,
 }) => {

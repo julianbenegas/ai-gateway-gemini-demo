@@ -49,12 +49,15 @@ export function useVoiceAgent<Context>({
     configuration: sessionConfig,
     beforeConnect,
   })
-  const { activity, dismissActivity } = useToolCalls({
+  const { activity, running, dismissActivity } = useToolCalls({
     session,
     tools,
     context,
   })
-  const { thinking: reasoning } = useResponses({ session })
+  const { thinking: reasoning } = useResponses({
+    session,
+    toolsRunning: running > 0,
+  })
 
   // Where each session began in the transcript, since the model forgets.
   const messages = session.realtime.messages
