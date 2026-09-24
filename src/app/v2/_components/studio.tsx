@@ -9,8 +9,12 @@ import { sidebarCookie } from '@/ui/sidebar'
 import { useSidebarWidth } from '@/ui/sidebar-resizer'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import { sitePreview } from '../_lib/preview'
-import { studioApi } from '../_lib/rpc'
-import { editSchema, STUDIO_INSTRUCTIONS } from '../_lib/tools'
+import { agentApi, studioApi } from '../_lib/rpc'
+import {
+  siteTools,
+  STUDIO_INSTRUCTIONS,
+  type StudioContext,
+} from '../_lib/tools'
 import { useVoiceAgent } from '../_lib/use-voice-agent'
 import { DesignList } from './design-list'
 import { NotesPanel } from './notes-panel'
@@ -34,12 +38,6 @@ const configuration = {
   outputAudioFormat: { type: 'audio/pcm', rate: 24000 },
   turnDetection: { type: 'server-vad' },
 } satisfies Experimental_RealtimeSessionConfig
-const labels = {
-  read_selection: 'Looking at your selection',
-  read_html: 'Reading the website',
-  edit_html: 'Updating the website',
-  write_html: 'Rewriting the website',
-}
 
 type PendingQuery = {
   resolve: (value: unknown) => void
@@ -55,10 +53,10 @@ export function Studio({
   const [site, setSite] = useState<SiteDocument | null>(null)
   const [designs, setDesigns] = useState<Design[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [sidebarWidth, setSidebarWidth] = useSidebarWidth(
-    sidebarCookie.v2,
-    initialWidth,
-  )
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth({
+    cookie: sidebarCookie.v2,
+    initial: initialWidth,
+  })
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<StudioMode>('browse')
@@ -109,7 +107,7 @@ export function Studio({
         designs.find((design) => design.id === saved)?.id ??
         designs[0]?.id ??
         null
-      const site = await studioApi.site(id)
+      const site = await studioApi.site({ id })
       if (version !== navigation.current) return
       setSite(site)
       setError(null)
@@ -151,10 +149,10 @@ export function Studio({
       try {
         await mutate(async () => {
           const site = await ensureSite()
-          const annotations = await studioApi.saveAnnotation(
-            site.id,
+          const annotations = await studioApi.saveAnnotation({
+            id: site.id,
             annotation,
-          )
+          })
           if (version === navigation.current)
             setSite((previous) =>
               previous ? { ...previous, annotations } : previous,
@@ -197,46 +195,91 @@ export function Studio({
     [],
   )
 
-  const executeTool = useCallback(
-    async (name: string, args: unknown, signal: AbortSignal) => {
-      if (name === 'read_selection') return readSelection()
-      if (name === 'read_html') {
+  // The voice session's authority for agent edits; see _server/grants.ts.
+  const grant = useRef<string | null>(null)
+  const revokeGrant = useCallback(() => {
+    const current = grant.current
+    grant.current = null
+    if (current) void agentApi.revoke({ grant: current }).catch(() => {})
+  }, [])
+  const startSession = useCallback(async () => {
+    const site = await ensureSite()
+    revokeGrant()
+    grant.current = (await studioApi.issueGrant({ designId: site.id! })).grant
+  }, [ensureSite, revokeGrant])
+
+  const agentEdit = useCallback(
+    ({
+      signal,
+      send,
+    }: {
+      signal: AbortSignal
+      send: (
+        grant: string,
+      ) => Promise<{ site: SiteDocument; matches?: number[]; missed: boolean }>
+    }) =>
+      mutate(async () => {
+        if (signal.aborted || !grant.current)
+          return { error: 'The voice session has ended.' }
+        const version = navigation.current
+        setSaving(true)
+        try {
+          const { site, matches, missed } = await send(grant.current)
+          if (version === navigation.current) showSite(site)
+          return { ok: true, matches, ...(missed && { html: site.html }) }
+        } finally {
+          setSaving(false)
+        }
+      }),
+    [mutate],
+  )
+
+  const studio = useMemo<StudioContext>(
+    () => ({
+      readSelection,
+      readHtml: async () => {
         await mutations.current.catch(() => {})
-        return { html: snapshot.current.site?.html ?? '' }
-      }
-      if (name === 'edit_html' || name === 'write_html')
-        return mutate(async () => {
-          if (signal.aborted) return { error: 'The voice session has ended.' }
-          const version = navigation.current
-          setSaving(true)
-          try {
-            const { site, matches, missed } = await studioApi.editSite(
-              snapshot.current.site?.id ?? null,
-              editSchema.parse(args),
-              signal,
-            )
-            if (version === navigation.current) showSite(site)
-            return { ok: true, matches, ...(missed && { html: site.html }) }
-          } finally {
-            setSaving(false)
-          }
-        })
-      return { error: `Unknown tool: ${name}` }
-    },
-    [mutate, readSelection],
+        return snapshot.current.site?.html ?? ''
+      },
+      editHtml: ({ input, callId, signal }) =>
+        agentEdit({
+          signal,
+          send: (grant) => agentApi.editHtml({ grant, input, callId, signal }),
+        }),
+      writeHtml: ({ input, callId, signal }) =>
+        agentEdit({
+          signal,
+          send: (grant) => agentApi.writeHtml({ grant, input, callId, signal }),
+        }),
+    }),
+    [readSelection, agentEdit],
   )
 
   const voice = useVoiceAgent({
     tokenEndpoint: '/v2/api/realtime',
     configuration,
-    labels,
-    beforeConnect: ensureSite,
-    executeTool,
+    tools: siteTools,
+    context: { studio },
+    beforeConnect: startSession,
   })
+  const endVoice = useCallback(() => {
+    voice.end()
+    revokeGrant()
+  }, [voice.end, revokeGrant])
+  useEffect(() => revokeGrant, [revokeGrant])
+
+  const undoAgentEdit = () =>
+    mutate(async () => {
+      showSite(
+        await studioApi.undoAgentEdit({
+          id: snapshot.current.site?.id ?? null,
+        }),
+      )
+    }).catch(fail)
 
   const openDesign = async (id: string | null) => {
     const version = ++navigation.current
-    voice.end()
+    endVoice()
     setOpening(true)
     setSelection(null)
     setNoteOpen(false)
@@ -244,7 +287,9 @@ export function Studio({
     try {
       await initializing.current?.catch(() => {})
       await mutations.current.catch(() => {})
-      const site = await (id ? studioApi.site(id) : studioApi.createDesign())
+      const site = await (id
+        ? studioApi.site({ id })
+        : studioApi.createDesign())
       if (version !== navigation.current) return
       showSite(site)
       setDraftDrawings([])
@@ -259,7 +304,10 @@ export function Studio({
   }
 
   const preview = useMemo(
-    () => (site ? sitePreview(site.html, window.location.origin) : ''),
+    () =>
+      site
+        ? sitePreview({ html: site.html, origin: window.location.origin })
+        : '',
     [site?.html],
   )
 
@@ -338,7 +386,7 @@ export function Studio({
     try {
       const site = await ensureSite()
       const annotations = await mutate(() =>
-        studioApi.saveAnnotation(site.id, annotation),
+        studioApi.saveAnnotation({ id: site.id, annotation }),
       )
       setSite((previous) =>
         previous ? { ...previous, annotations } : previous,
@@ -357,7 +405,10 @@ export function Studio({
   const deleteNote = async (id: string) => {
     try {
       const annotations = await mutate(() =>
-        studioApi.deleteAnnotation(snapshot.current.site?.id ?? null, id),
+        studioApi.deleteAnnotation({
+          id: snapshot.current.site?.id ?? null,
+          annotationId: id,
+        }),
       )
       setSite((previous) =>
         previous ? { ...previous, annotations } : previous,
@@ -368,7 +419,8 @@ export function Studio({
   }
 
   const downloadHtml = () => {
-    if (site) download('index.html', site.html, 'text/html')
+    if (site)
+      download({ name: 'index.html', content: site.html, type: 'text/html' })
   }
 
   const notice =
@@ -403,6 +455,8 @@ export function Studio({
                 : null
         }
         disabled={!site}
+        agentEdits={site?.agentEdits ?? 0}
+        onUndoAgentEdit={() => void undoAgentEdit()}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         onViewSource={() => setSourceOpen(true)}
         onDownload={downloadHtml}
@@ -475,7 +529,7 @@ export function Studio({
           </Notice>
         )}
         <StudioDock
-          voice={voice}
+          voice={{ ...voice, end: endVoice }}
           mode={mode}
           selection={selection}
           noteOpen={noteOpen}

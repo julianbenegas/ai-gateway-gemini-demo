@@ -28,10 +28,10 @@ export function Workspace({
   const [editor, setEditor] = useState<Editor | null>(null)
   const [boards, setBoards] = useState(() => boardsFromSnapshot(snapshot))
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [sidebarWidth, setSidebarWidth] = useSidebarWidth(
-    sidebarCookie.v1,
-    initialWidth,
-  )
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth({
+    cookie: sidebarCookie.v1,
+    initial: initialWidth,
+  })
   const page = boards.pages.find((page) => page.id === boards.currentId)
   const newBoard = () => {
     if (!editor) return

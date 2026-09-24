@@ -19,7 +19,7 @@ import {
 } from 'tldraw'
 import { unwrap } from '@/lib/rpc'
 import { STARTER_HTML } from '@/lib/starter-site'
-import { focusCanvas } from '../_lib/agent'
+import { focusCanvas } from '../_lib/operations'
 import type { Boards } from '../_lib/boards'
 import { api } from '../_lib/rpc'
 import { CanvasContextMenu } from './canvas-menus'
@@ -206,13 +206,13 @@ function seedFirstBoard(editor: Editor) {
     },
   ])
   editor.select(id)
-  focusCanvas(
+  focusCanvas({
     editor,
-    Box.Common(
+    bounds: Box.Common(
       editor
         .getCurrentPageShapes()
         .map((shape) => editor.getShapePageBounds(shape)!),
     ),
-  )
+  })
   editor.clearHistory()
 }

@@ -5,12 +5,11 @@ type ErrorStatus = 400 | 401 | 403 | 404 | 413 | 503
 
 /** An error with an HTTP status whose message is safe to show the client. */
 export class HttpError extends Error {
-  constructor(
-    message: string,
-    // Literal statuses keep Eden from typing errors as successful responses.
-    public status: ErrorStatus = 400,
-  ) {
+  // Literal statuses keep Eden from typing errors as successful responses.
+  status: ErrorStatus
+  constructor({ message, status }: { message: string; status: ErrorStatus }) {
     super(message)
+    this.status = status
   }
 }
 

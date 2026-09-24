@@ -1,31 +1,42 @@
-import {
+// Type-only tldraw imports keep this module loadable on the server, where the
+// voice controls render before the canvas does.
+import type {
   Box,
-  createShapeId,
-  type Editor,
-  type TLParentId,
-  type TLShape,
-  type TLShapeId,
-  type TLShapePartial,
+  Editor,
+  TLParentId,
+  TLShape,
+  TLShapeId,
+  TLShapePartial,
 } from 'tldraw'
-import {
-  applySchema,
-  editHtmlSchema,
-  inspectSchema,
-  readShapesSchema,
-} from './tools'
+import type { z } from 'zod'
 import { applyReplacements } from '@/lib/replacements'
 import { unwrap } from '@/lib/rpc'
 import { capturePreview } from './capture'
 import { api } from './rpc'
+import type { applySchema, editHtmlSchema } from './schemas'
 
-export function focusCanvas(editor: Editor, bounds: Box) {
+export function focusCanvas({
+  editor,
+  bounds,
+}: {
+  editor: Editor
+  bounds: Box
+}) {
   editor.zoomToBounds(bounds, {
     animation: { duration: 220 },
     inset: Math.min(220, editor.getViewportScreenBounds().w / 3),
   })
 }
 
-function describeShape(editor: Editor, shape: TLShape, includeHtml: boolean) {
+export function describeShape({
+  editor,
+  shape,
+  includeHtml,
+}: {
+  editor: Editor
+  shape: TLShape
+  includeHtml: boolean
+}) {
   return {
     ...shape,
     props:
@@ -37,7 +48,7 @@ function describeShape(editor: Editor, shape: TLShape, includeHtml: boolean) {
   }
 }
 
-export function readBoard(editor: Editor) {
+export function readBoard({ editor }: { editor: Editor }) {
   const shapes = editor.getCurrentPageShapes()
   const selectedIds = editor.getSelectedShapeIds()
   const viewport = editor.getViewportPageBounds()
@@ -66,12 +77,19 @@ export function readBoard(editor: Editor) {
       .map((shape) => shape.id),
     viewport: viewport.toJson(),
     pointer: editor.inputs.getCurrentPagePoint(),
-    shapes: shapes.map((shape) => describeShape(editor, shape, false)),
+    shapes: shapes.map((shape) =>
+      describeShape({ editor, shape, includeHtml: false }),
+    ),
   }
 }
 
-export function applyCanvasActions(editor: Editor, input: unknown) {
-  const { pageId, actions } = applySchema.parse(input)
+export function applyCanvasActions({
+  editor,
+  input: { pageId, actions },
+}: {
+  editor: Editor
+  input: z.infer<typeof applySchema>
+}) {
   const before = new Map(
     editor.store.query
       .records('shape')
@@ -93,7 +111,8 @@ export function applyCanvasActions(editor: Editor, input: unknown) {
         switch (action.op) {
           case 'create': {
             const id =
-              (action.shape.id as TLShapeId | undefined) ?? createShapeId()
+              (action.shape.id as TLShapeId | undefined) ??
+              (`shape:${crypto.randomUUID()}` as TLShapeId)
             if (editor.getShape(id))
               throw new Error(
                 `Shape ${id} already exists. Use a new ID to create another shape.`,
@@ -165,11 +184,10 @@ export function applyCanvasActions(editor: Editor, input: unknown) {
             const ids = existingIds(action.ids)
             const page = editor.getAncestorPageId(ids[0])
             if (page) editor.setCurrentPage(page)
-            const bounds = ids
-              .filter((id) => editor.getAncestorPageId(id) === page)
-              .map((id) => editor.getShapePageBounds(id))
-              .filter((bounds): bounds is Box => !!bounds)
-            if (bounds.length) focusCanvas(editor, Box.Common(bounds))
+            const bounds = editor.getShapesPageBounds(
+              ids.filter((id) => editor.getAncestorPageId(id) === page),
+            )
+            if (bounds) focusCanvas({ editor, bounds })
             break
           }
         }
@@ -198,7 +216,7 @@ export function applyCanvasActions(editor: Editor, input: unknown) {
   }
 }
 
-export async function captureCanvas(editor: Editor) {
+async function captureCanvas({ editor }: { editor: Editor }) {
   const bounds = editor.getViewportPageBounds()
   const shapes = editor.getCurrentPageShapes().filter((shape) => {
     const box = editor.getShapePageBounds(shape)
@@ -207,7 +225,7 @@ export async function captureCanvas(editor: Editor) {
   if (!shapes.length) return null
   const websites = shapes.filter((shape) => shape.type === 'website')
   const results = await Promise.allSettled(
-    websites.map((shape) => capturePreview(shape.id)),
+    websites.map((shape) => capturePreview({ id: shape.id })),
   )
   const warnings = results.flatMap((result, index) =>
     result.status === 'rejected'
@@ -225,68 +243,60 @@ export async function captureCanvas(editor: Editor) {
   return { image: url, warnings, bounds: bounds.toJson() }
 }
 
-function editHtml(editor: Editor, input: unknown) {
-  const { id, replacements } = editHtmlSchema.parse(input)
+export function editHtml({
+  editor,
+  input: { id, replacements },
+}: {
+  editor: Editor
+  input: z.infer<typeof editHtmlSchema>
+}) {
   const shape = editor.getShape(id as TLShapeId)
   if (!shape) return { updatedIds: [], missingIds: [id] }
   if (shape.type !== 'website')
     return {
       updatedIds: [],
       error: `${id} is a ${shape.type} shape, not a website.`,
-      context: readBoard(editor),
+      context: readBoard({ editor }),
     }
-  const { html, matches } = applyReplacements(shape.props.html, replacements)
-  const result = applyCanvasActions(editor, {
-    actions:
-      html === shape.props.html
-        ? []
-        : [{ op: 'update', shape: { id, props: { html } } }],
+  const { html, matches } = applyReplacements({
+    html: shape.props.html,
+    replacements,
+  })
+  const result = applyCanvasActions({
+    editor,
+    input: {
+      actions:
+        html === shape.props.html
+          ? []
+          : [{ op: 'update', shape: { id, props: { html } } }],
+    },
   })
   return { ...result, matches, ...(matches.includes(0) ? { html } : {}) }
 }
 
-export async function executeCanvasTool(
-  editor: Editor,
-  name: string,
-  args: unknown,
-  signal?: AbortSignal,
-) {
-  switch (name) {
-    case 'read_board':
-      return readBoard(editor)
-    case 'read_shapes': {
-      const { ids } = readShapesSchema.parse(args)
-      return ids.map((id) => {
-        const shape = editor.getShape(id as TLShapeId)
-        return shape
-          ? describeShape(editor, shape, true)
-          : { id, missing: true }
-      })
-    }
-    case 'apply_actions':
-      return applyCanvasActions(editor, args)
-    case 'edit_html':
-      return editHtml(editor, args)
-    case 'inspect_canvas': {
-      const { question } = inspectSchema.parse(args)
-      const context = readBoard(editor)
-      const captured = await captureCanvas(editor)
-      if (!captured)
-        return { observation: 'The current viewport is empty.', context }
-      const result = await unwrap(
-        api.inspect.post(
-          {
-            image: captured.image,
-            warnings: captured.warnings,
-            question: question || 'Describe the websites and annotations.',
-            context,
-          },
-          { fetch: { signal } },
-        ),
-      )
-      return { ...result, warnings: captured.warnings, pageId: context.pageId }
-    }
-    default:
-      throw new Error(`Unknown canvas tool: ${name}`)
-  }
+export async function inspectCanvas({
+  editor,
+  question,
+  signal,
+}: {
+  editor: Editor
+  question?: string
+  signal: AbortSignal
+}) {
+  const context = readBoard({ editor })
+  const captured = await captureCanvas({ editor })
+  if (!captured)
+    return { observation: 'The current viewport is empty.', context }
+  const result = await unwrap(
+    api.inspect.post(
+      {
+        image: captured.image,
+        warnings: captured.warnings,
+        question: question || 'Describe the websites and annotations.',
+        context,
+      },
+      { fetch: { signal } },
+    ),
+  )
+  return { ...result, warnings: captured.warnings, pageId: context.pageId }
 }

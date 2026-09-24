@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import type { Editor } from 'tldraw'
 import { Notice } from '@/ui/notice'
 import { VoiceControls } from '@/ui/voice-controls'
-import { CANVAS_INSTRUCTIONS } from '../_lib/tools'
+import { CANVAS_INSTRUCTIONS, canvasTools } from '../_lib/tools'
 import { useVoiceAgent } from '../_lib/use-voice-agent'
 
 const configuration = {
@@ -16,27 +16,13 @@ const configuration = {
   outputAudioFormat: { type: 'audio/pcm', rate: 24000 },
   turnDetection: { type: 'server-vad' },
 } satisfies Experimental_RealtimeSessionConfig
-const labels: Record<string, string> = {
-  read_board: 'Looking at your board',
-  read_shapes: 'Reading the design',
-  edit_html: 'Updating the website',
-  apply_actions: 'Updating the canvas',
-  inspect_canvas: 'Taking a closer look',
-}
 
 export function CanvasVoice({ editor }: { editor: Editor | null }) {
-  const current = useRef(editor)
-  current.current = editor
   const voice = useVoiceAgent({
     tokenEndpoint: '/v1/api/realtime',
     configuration,
-    labels,
-    // The agent imports tldraw, which only loads in the browser with the canvas.
-    executeTool: async (name, args, signal) => {
-      if (!current.current) throw new Error('The canvas is still loading.')
-      const { executeCanvasTool } = await import('../_lib/agent')
-      return executeCanvasTool(current.current, name, args, signal)
-    },
+    tools: canvasTools,
+    context: editor && { editor },
   })
   const { error, setError, activity, setActivity, end } = voice
   useEffect(() => {

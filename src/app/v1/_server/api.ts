@@ -5,7 +5,6 @@ import { z } from 'zod'
 import { apiDefaults, HttpError } from '@/lib/api'
 import { VISION_MODEL } from '@/lib/models'
 import { gatewayError, realtimeToken } from '@/lib/realtime'
-import { canvasTools } from '../_lib/tools'
 import { loadBoard, saveBoard, snapshotSchema } from './board'
 
 const inspectSchema = z.object({
@@ -26,15 +25,15 @@ export const api = new Elysia({ prefix: '/v1/api' })
     },
     { body: snapshotSchema },
   )
-  .post('/realtime', async () => realtimeToken(canvasTools))
+  .post('/realtime', async () => realtimeToken())
   .post(
     '/inspect',
     async ({ body, request }) => {
       if (body.image.length > 3_500_000)
-        throw new HttpError(
-          'Canvas capture is too large. Zoom into a smaller area.',
-          413,
-        )
+        throw new HttpError({
+          message: 'Canvas capture is too large. Zoom into a smaller area.',
+          status: 413,
+        })
       try {
         const result = await generateText({
           model: VISION_MODEL,
@@ -59,7 +58,7 @@ export const api = new Elysia({ prefix: '/v1/api' })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         console.error('Canvas inspection failed:', message)
-        throw new HttpError(gatewayError(message), 503)
+        throw new HttpError({ message: gatewayError(message), status: 503 })
       }
     },
     { body: inspectSchema },

@@ -55,7 +55,19 @@ Nothing is injected into the conversation; the agent pulls context through tools
 
 **Studio:** `read_selection` (DOM selection, notes, and drawings anchored to elements), `read_html`, `edit_html` (literal search/replace), `write_html` (full rewrite).
 
-Edits are validated and last-write-wins. Canvas edits are undoable through tldraw. The canvas saves the whole tldraw snapshot to Redis shortly after each change; the page loads it in a Server Component, so the sidebar, header, and saved sidebar width render before tldraw loads and nothing shifts. Studio designs are one Redis hash each, with separate `html` and `annotations` fields, so a saved note never overwrites a concurrent page edit. Each edit re-adds missing `data-margin-id` attributes so annotations stay attached. Each example scopes its data to the browser with its own `HttpOnly` owner cookie; this is a demo, not an account system.
+Realtime tool calls arrive in the browser over the model's WebSocket, so the tools run there. Each example defines them in `_lib/tools.ts` like AI SDK tools, with a label, a zod `input`, and an `execute` typed from it (`lib/tools.ts`). The voice loop generates the session's tool definitions from those inputs, validates every call's name and arguments, and passes `execute` the example's context: the tldraw editor in v1 and the studio's actions in v2. The token route mints only a Gateway token.
+
+## Agent auth
+
+A tool call runs in the user's browser, with the user's cookie, so by itself the API can't tell the agent from the user. The API is the security boundary, not the model or the session: the browser declares the session's tools, and anything in the page can steer the model.
+
+v2 makes agent calls explicit. Starting voice issues a session grant (`_server/grants.ts`): an opaque token in Redis, scoped to one design and to `edit_html` and `write_html`, that expires with Gateway's 25-minute session limit. Agent writes go to `/v2/api/agent/*` with `Authorization: Bearer <grant>` and the tool call ID. They also need the owner cookie that issued the grant, so a leaked grant alone can't edit anything. Ending voice or switching designs revokes the grant. User actions, such as notes and undo, use the cookie alone.
+
+Every agent write keeps the previous HTML, up to 50 versions, and **Undo agent edit** in the header restores it. That keeps prompt injection recoverable: text in the page that talks the model into rewriting it can be undone.
+
+## Storage
+
+Canvas edits are undoable through tldraw. The canvas saves the whole tldraw snapshot to Redis shortly after each change; the page loads it in a Server Component, so the sidebar, header, and saved sidebar width render before tldraw loads and nothing shifts. Studio designs are one Redis hash each, with separate `html` and `annotations` fields, so a saved note never overwrites a concurrent page edit. Each edit re-adds missing `data-margin-id` attributes so annotations stay attached. Each example scopes its data to the browser with its own `HttpOnly` owner cookie; this is a demo, not an account system.
 
 Websites render in `sandbox="allow-scripts"` iframes, with a CSP that blocks network access and only allows this origin's scripts.
 
@@ -64,7 +76,7 @@ Websites render in `sandbox="allow-scripts"` iframes, with a CSP that blocks net
 Import the directory as the project root. Set `AI_GATEWAY_API_KEY` and the Redis variables in the project environment.
 
 - **tldraw license.** tldraw 5 needs a license on production domains: set `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`.
-- **Deployment Protection.** Keep previews behind it. The token and inspection routes spend Gateway credits, and the origin checks are not authentication.
+- **Deployment Protection.** Keep previews behind it. The token and inspection routes spend Gateway credits without rate limits, and the origin checks are not authentication.
 
 ## Verify
 

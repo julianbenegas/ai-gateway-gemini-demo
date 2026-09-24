@@ -44,11 +44,11 @@ export function CanvasContextMenu(props: TLUiContextMenuProps) {
               icon="download"
               readonlyOk
               onSelect={() =>
-                download(
-                  `${website.props.title.replace(/[^a-z0-9-_]/gi, '-').toLowerCase() || 'website'}.html`,
-                  website.props.html,
-                  'text/html',
-                )
+                download({
+                  name: `${website.props.title.replace(/[^a-z0-9-_]/gi, '-').toLowerCase() || 'website'}.html`,
+                  content: website.props.html,
+                  type: 'text/html',
+                })
               }
             />
           </TldrawUiMenuGroup>
@@ -77,11 +77,11 @@ export function CanvasContextMenu(props: TLUiContextMenuProps) {
             icon="download"
             readonlyOk
             onSelect={async () => {
-              download(
-                `${editor.getCurrentPage().name}.tldr`,
-                await serializeTldrawJson(editor),
-                'application/json',
-              )
+              download({
+                name: `${editor.getCurrentPage().name}.tldr`,
+                content: await serializeTldrawJson(editor),
+                type: 'application/json',
+              })
             }}
           />
         </TldrawUiMenuGroup>

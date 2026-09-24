@@ -11,8 +11,13 @@ async function mockFiles(page: Page) {
   let site = initial
   let created = 0
   const sites = new Map<string, SiteDocument>()
+  const history = new Map<string, string[]>()
   const designs: Design[] = []
-  const designId = (url: string) => new URL(url).pathname.split('/')[4]
+  const grants = new Map<string, string>()
+  const agentRequests: { tool: string; headers: Record<string, string> }[] = []
+  const revoked: string[] = []
+  const segment = (url: string, index: number) =>
+    new URL(url).pathname.split('/')[index]
   await page.route('**/v2/api/designs', async (route) => {
     if (route.request().method() !== 'POST')
       return route.fulfill({ json: designs })
@@ -23,15 +28,54 @@ async function mockFiles(page: Page) {
     await route.fulfill({ json: site })
   })
   await page.route('**/v2/api/designs/*', async (route) => {
-    site = sites.get(designId(route.request().url()))!
-    if (route.request().method() !== 'PATCH')
-      return route.fulfill({ json: site })
+    site = sites.get(segment(route.request().url(), 4))!
+    await route.fulfill({ json: site })
+  })
+  await page.route('**/v2/api/designs/*/undo', async (route) => {
+    site = sites.get(segment(route.request().url(), 4))!
+    site.html = history.get(site.id!)!.pop()!
+    site.agentEdits = history.get(site.id!)!.length
+    await route.fulfill({ json: site })
+  })
+  await page.route('**/v2/api/designs/*/annotations**', async (route) => {
+    const url = route.request().url()
+    site = sites.get(segment(url, 4))!
+    site.annotations =
+      route.request().method() === 'DELETE'
+        ? site.annotations.filter((note) => note.id !== segment(url, 6))
+        : [...site.annotations, route.request().postDataJSON()]
+    await route.fulfill({ json: site.annotations })
+  })
+  await page.route('**/v2/api/grants', async (route) => {
+    const grant = `grant-${grants.size + 1}`
+    grants.set(grant, route.request().postDataJSON().designId)
+    await route.fulfill({ json: { grant, expiresIn: 1500 } })
+  })
+  await page.route('**/v2/api/agent/*', async (route) => {
+    const headers = route.request().headers()
+    const grant = headers.authorization?.replace('Bearer ', '') ?? ''
+    if (route.request().method() === 'DELETE') {
+      revoked.push(grant)
+      return route.fulfill({ json: { ok: true } })
+    }
+    agentRequests.push({ tool: segment(route.request().url(), 4), headers })
+    if (!grants.has(grant))
+      return route.fulfill({ status: 401, json: { error: 'No grant' } })
+    site = sites.get(grants.get(grant)!)!
     const edit = route.request().postDataJSON()
     const result =
       'html' in edit
         ? { html: edit.html, matches: undefined }
-        : applyReplacements(site.html, edit.replacements)
-    site.html = prepareHtml(result.html)
+        : applyReplacements({
+            html: site.html,
+            replacements: edit.replacements,
+          })
+    const html = prepareHtml({ html: result.html })
+    if (html !== site.html) {
+      history.set(site.id!, [...(history.get(site.id!) ?? []), site.html])
+      site.html = html
+      site.agentEdits = history.get(site.id!)!.length
+    }
     await route.fulfill({
       json: {
         site,
@@ -40,15 +84,6 @@ async function mockFiles(page: Page) {
       },
     })
   })
-  await page.route('**/v2/api/designs/*/annotations**', async (route) => {
-    const { pathname } = new URL(route.request().url())
-    site = sites.get(pathname.split('/')[4])!
-    site.annotations =
-      route.request().method() === 'DELETE'
-        ? site.annotations.filter((note) => note.id !== pathname.split('/')[6])
-        : [...site.annotations, route.request().postDataJSON()]
-    await route.fulfill({ json: site.annotations })
-  })
   return {
     get created() {
       return created
@@ -56,6 +91,9 @@ async function mockFiles(page: Page) {
     get site() {
       return site
     },
+    grants,
+    agentRequests,
+    revoked,
   }
 }
 
@@ -182,19 +220,33 @@ test('v2 owns its session before exposing remote file and voice tools', async ({
   expect(initial.status()).toBe(200)
   expect((await initial.json()).persisted).toBe(false)
   const designId = crypto.randomUUID()
-  const write = await request.patch(`/v2/api/designs/${designId}`, {
+  const grant = await request.post('/v2/api/grants', {
     headers,
+    data: { designId },
+  })
+  expect(grant.status()).toBe(401)
+  const write = await request.post('/v2/api/agent/write_html', {
+    headers: { ...headers, 'x-tool-call-id': 'call-1' },
     data: { html: '<h1>Mine</h1>' },
   })
   expect(write.status()).toBe(401)
+  const forged = await request.post('/v2/api/agent/write_html', {
+    headers: {
+      ...headers,
+      authorization: 'Bearer not-a-real-grant-token-at-all',
+      'x-tool-call-id': 'call-2',
+    },
+    data: { html: '<h1>Mine</h1>' },
+  })
+  expect(forged.status()).toBe(401)
   const voice = await request.post('/v2/api/realtime', { headers })
   expect(voice.status()).toBe(401)
   const foreign = await request.post('/v2/api/designs', {
     headers: { Origin: 'https://another.example' },
   })
   expect(foreign.status()).toBe(403)
-  const foreignWrite = await request.patch(`/v2/api/designs/${designId}`, {
-    headers: { Origin: 'https://another.example' },
+  const foreignWrite = await request.post('/v2/api/agent/write_html', {
+    headers: { Origin: 'https://another.example', 'x-tool-call-id': 'call-3' },
     data: { html: '<h1>Mine</h1>' },
   })
   expect(foreignWrite.status()).toBe(403)
@@ -400,4 +452,49 @@ test('the sidebar creates independent designs and reopens the last one after ref
   await expect(preview.getByRole('heading', { level: 1 })).toContainText(
     'First design.',
   )
+})
+
+test('agent edits carry the voice session grant and can be undone', async ({
+  page,
+}) => {
+  const files = await mockFiles(page)
+  const gateway = await mockGateway(page, '**/v2/api/realtime')
+  await page.goto('/v2')
+  await page
+    .getByRole('button', { name: 'Talk and annotate', exact: true })
+    .click()
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+  expect([...files.grants.values()]).toEqual([files.site.id])
+  const [grant] = files.grants.keys()
+  await expect(
+    page.getByRole('button', { name: 'Undo agent edit' }),
+  ).toBeDisabled()
+  await gateway.call(
+    'edit_html',
+    replaceCopy('Good spaces.', 'Great.'),
+    'edit-call',
+  )
+  expect(files.agentRequests.at(-1)).toMatchObject({
+    tool: 'edit_html',
+    headers: {
+      authorization: `Bearer ${grant}`,
+      'x-tool-call-id': 'edit-call',
+    },
+  })
+  const preview = page.frameLocator('iframe[title="Website preview"]')
+  await expect(preview.getByRole('heading', { level: 1 })).toContainText(
+    'Great.',
+  )
+  const invalid = await gateway.call('write_html', { markup: 'nope' })
+  expect(invalid.error).toContain('Invalid write_html arguments')
+  const unknown = await gateway.call('delete_site', {})
+  expect(unknown.error).toBe('Unknown tool: delete_site')
+  await page.getByRole('button', { name: 'Undo agent edit' }).click()
+  await expect(preview.getByRole('heading', { level: 1 })).toContainText(
+    'Good spaces.',
+  )
+  await page.getByRole('button', { name: 'End voice session' }).click()
+  await expect.poll(() => files.revoked).toEqual([grant])
 })

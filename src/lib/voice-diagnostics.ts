@@ -13,11 +13,15 @@ type ResponseDetails = {
   }
 }
 
-export function recordVoiceResponse(
-  responseId: string,
-  status: string,
-  raw: unknown,
-) {
+export function recordVoiceResponse({
+  responseId,
+  status,
+  raw,
+}: {
+  responseId: string
+  status: string
+  raw: unknown
+}) {
   const response = (raw as ResponseDetails | null)?.response
   const details = {
     time: new Date().toISOString(),
@@ -46,7 +50,13 @@ export function recordVoiceResponse(
   return details
 }
 
-export function voiceResponseError(status: string, reason?: string) {
+export function voiceResponseError({
+  status,
+  reason,
+}: {
+  status: string
+  reason?: string
+}) {
   if (reason === 'max_output_tokens')
     return 'The response reached its output limit before finishing. Voice is still connected.'
   if (reason?.includes('context'))

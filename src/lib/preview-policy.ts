@@ -2,7 +2,13 @@
  * Parses website HTML for a sandboxed iframe: replaces any page CSP with one
  * that blocks network access and only allows scripts from this origin.
  */
-export function sandboxedDocument(html: string, origin: string) {
+export function sandboxedDocument({
+  html,
+  origin,
+}: {
+  html: string
+  origin: string
+}) {
   const document = new DOMParser().parseFromString(html, 'text/html')
   document
     .querySelectorAll('meta[http-equiv="Content-Security-Policy"]')

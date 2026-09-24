@@ -2,11 +2,23 @@ import { randomUUID } from 'node:crypto'
 import { parse, serialize, type DefaultTreeAdapterMap } from 'parse5'
 import { STARTER_HTML } from '@/lib/starter-site'
 
-export function prepareHtml(html: string, seed = false) {
+export function prepareHtml({
+  html,
+  seed = false,
+}: {
+  html: string
+  seed?: boolean
+}) {
   const document = parse(html)
   const ids = new Set<string>()
   let n = 0
-  function visit(node: DefaultTreeAdapterMap['node'], insideBody = false) {
+  function visit({
+    node,
+    insideBody = false,
+  }: {
+    node: DefaultTreeAdapterMap['node']
+    insideBody?: boolean
+  }) {
     if ('tagName' in node) {
       insideBody ||= node.tagName === 'body'
       if (
@@ -26,9 +38,9 @@ export function prepareHtml(html: string, seed = false) {
       }
     }
     if ('childNodes' in node)
-      for (const child of node.childNodes) visit(child, insideBody)
+      for (const child of node.childNodes) visit({ node: child, insideBody })
   }
-  visit(document)
+  visit({ node: document })
   return serialize(document)
 }
 
@@ -40,4 +52,4 @@ body{max-width:1440px;margin:auto}nav{padding:32px 6%}.hero{padding:70px 6% 48px
 </style>`,
 )
 
-export const STUDIO_STARTER_HTML = prepareHtml(starter, true)
+export const STUDIO_STARTER_HTML = prepareHtml({ html: starter, seed: true })

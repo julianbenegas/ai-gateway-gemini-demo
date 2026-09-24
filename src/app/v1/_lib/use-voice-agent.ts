@@ -5,6 +5,7 @@ import { gateway } from '@ai-sdk/gateway'
 import { experimental_useRealtime as useRealtime } from '@ai-sdk/react'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import { LIVE_MODEL } from '@/lib/models'
+import { realtimeToolDefinitions, runTool, type Tools } from '@/lib/tools'
 import {
   recordVoiceResponse,
   voiceResponseError,
@@ -21,23 +22,28 @@ type Activity = {
 
 export type VoiceAgent = ReturnType<typeof useVoiceAgent>
 
-export function useVoiceAgent({
+export function useVoiceAgent<Context>({
   tokenEndpoint,
   configuration,
-  executeTool,
-  labels,
+  tools,
+  context,
   beforeConnect,
 }: {
   tokenEndpoint: string
   configuration: Experimental_RealtimeSessionConfig
-  executeTool: (
-    name: string,
-    args: unknown,
-    signal: AbortSignal,
-  ) => Promise<unknown>
-  labels: Record<string, string>
+  /** The tools the model can call, with their `execute`. */
+  tools: Tools<Context>
+  /** Passed to every tool; tool calls fail while it is null. */
+  context: Context | null
   beforeConnect?: () => Promise<unknown>
 }) {
+  const latestContext = useRef(context)
+  latestContext.current = context
+  // Tool calls run here, in the browser, so the definitions are sent from here.
+  const [sessionConfig] = useState(() => ({
+    ...configuration,
+    tools: realtimeToolDefinitions({ tools }),
+  }))
   const [error, setError] = useState<string | null>(null)
   const [requestingMic, setRequestingMic] = useState(false)
   const [activity, setActivity] = useState<Activity | null>(null)
@@ -67,7 +73,7 @@ export function useVoiceAgent({
   const realtime = useRealtime({
     model,
     api: { token: tokenEndpoint },
-    sessionConfig: configuration,
+    sessionConfig,
     onEvent: (event) => {
       if (ending.current || !mounted.current) return
       if (
@@ -133,11 +139,11 @@ export function useVoiceAgent({
         setResponseState('idle')
         const response = toolResponses.current.get(event.responseId)
         toolResponses.current.delete(event.responseId)
-        const details = recordVoiceResponse(
-          event.responseId,
-          event.status,
-          event.raw,
-        )
+        const details = recordVoiceResponse({
+          responseId: event.responseId,
+          status: event.status,
+          raw: event.raw,
+        })
         if (
           response?.valid &&
           !response.interrupted &&
@@ -150,10 +156,10 @@ export function useVoiceAgent({
         ) {
           setResponseState('idle')
           setError(
-            voiceResponseError(
-              event.status,
-              details.errorCode ?? details.reason,
-            ),
+            voiceResponseError({
+              status: event.status,
+              reason: details.errorCode ?? details.reason,
+            }),
           )
         }
         if (!response?.invalid) return
@@ -202,16 +208,22 @@ export function useVoiceAgent({
           return { error: 'The voice session has ended.' }
         const entry: Activity = {
           id: toolCall.toolCallId,
-          label: labels[toolCall.toolName] || 'Working on the canvas',
+          label: Object.hasOwn(tools, toolCall.toolName)
+            ? tools[toolCall.toolName].label
+            : 'Working',
           state: 'running',
         }
         setActivity(entry)
         try {
-          const result = await executeTool(
-            toolCall.toolName,
-            toolCall.args,
-            abort.current.signal,
-          )
+          if (!latestContext.current)
+            throw new Error('The workspace is still loading.')
+          const result = await runTool({
+            tools,
+            name: toolCall.toolName,
+            args: toolCall.args,
+            call: { callId: toolCall.toolCallId, signal: abort.current.signal },
+            context: latestContext.current,
+          })
           if (currentEpoch === epoch.current && mounted.current) {
             setActivity((previous) =>
               previous?.id === entry.id

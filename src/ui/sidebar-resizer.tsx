@@ -13,7 +13,13 @@ import {
  * A draggable sidebar width. It is kept in a cookie so the server renders the
  * saved width and the layout doesn't shift on load.
  */
-export function useSidebarWidth(cookie: string, initial: number) {
+export function useSidebarWidth({
+  cookie,
+  initial,
+}: {
+  cookie: string
+  initial: number
+}) {
   const [width, setWidth] = useState(initial)
   const resize = (next: number) => {
     const width = clampSidebar(next)

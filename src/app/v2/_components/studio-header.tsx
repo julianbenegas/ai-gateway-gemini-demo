@@ -5,6 +5,7 @@ import {
   Download,
   LoaderCircle,
   PanelLeft,
+  Undo2,
 } from 'lucide-react'
 import { Brand } from '@/ui/brand'
 import { IconButton } from '@/ui/button'
@@ -19,6 +20,8 @@ export function StudioHeader({
   designName,
   status,
   disabled,
+  agentEdits,
+  onUndoAgentEdit,
   onToggleSidebar,
   onViewSource,
   onDownload,
@@ -26,6 +29,8 @@ export function StudioHeader({
   designName: string
   status: keyof typeof statusIcons | null
   disabled: boolean
+  agentEdits: number
+  onUndoAgentEdit: () => void
   onToggleSidebar: () => void
   onViewSource: () => void
   onDownload: () => void
@@ -49,6 +54,13 @@ export function StudioHeader({
             <span className="sr-only">{Status.label}</span>
           </span>
         )}
+        <IconButton
+          label="Undo agent edit"
+          onClick={onUndoAgentEdit}
+          disabled={!agentEdits}
+        >
+          <Undo2 size={16} />
+        </IconButton>
         <IconButton
           label="View website source"
           onClick={onViewSource}

@@ -8,11 +8,16 @@ export const replacementsSchema = z.array(
   }),
 )
 
+export type Replacement = z.infer<typeof replacementsSchema>[number]
+
 /** Applies literal search/replace pairs in order and counts each match. */
-export function applyReplacements(
-  source: string,
-  replacements: z.infer<typeof replacementsSchema>,
-) {
+export function applyReplacements({
+  html: source,
+  replacements,
+}: {
+  html: string
+  replacements: Replacement[]
+}) {
   let html = source
   const matches = replacements.map(({ search, replace, all }) => {
     let count = 0

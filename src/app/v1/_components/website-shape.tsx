@@ -35,12 +35,21 @@ function Website({ shape }: { shape: WebsiteShape }) {
     [editor, shape.id],
   )
   const html = useMemo(
-    () => buildPreviewDocument(shape.props.html, window.location.origin),
+    () =>
+      buildPreviewDocument({
+        html: shape.props.html,
+        origin: window.location.origin,
+      }),
     [shape.props.html],
   )
-  const key = previewKey(shape.props.html, shape.props.w, shape.props.h)
+  const key = previewKey({
+    html: shape.props.html,
+    w: shape.props.w,
+    h: shape.props.h,
+  })
   useEffect(() => {
-    if (frame.current) return registerPreview(shape.id, frame.current, key)
+    if (frame.current)
+      return registerPreview({ id: shape.id, frame: frame.current, key })
   }, [shape.id, key])
 
   return (
@@ -94,10 +103,14 @@ export class WebsiteShapeUtil extends BaseBoxShapeUtil<WebsiteShape> {
     return path
   }
   override toSvg(shape: WebsiteShape) {
-    const image = getPreviewCapture(
-      shape.id,
-      previewKey(shape.props.html, shape.props.w, shape.props.h),
-    )
+    const image = getPreviewCapture({
+      id: shape.id,
+      key: previewKey({
+        html: shape.props.html,
+        w: shape.props.w,
+        h: shape.props.h,
+      }),
+    })
     return image ? (
       <image href={image} width={shape.props.w} height={shape.props.h} />
     ) : (

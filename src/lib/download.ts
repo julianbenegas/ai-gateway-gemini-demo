@@ -1,4 +1,12 @@
-export function download(name: string, content: string, type: string) {
+export function download({
+  name,
+  content,
+  type,
+}: {
+  name: string
+  content: string
+  type: string
+}) {
   const url = URL.createObjectURL(new Blob([content], { type }))
   const anchor = document.createElement('a')
   anchor.href = url

@@ -1,24 +1,22 @@
 import 'server-only'
 import { gateway } from '@ai-sdk/gateway'
-import { experimental_getRealtimeToolDefinitions, type ToolSet } from 'ai'
 import { HttpError } from './api'
 import { LIVE_MODEL } from './models'
 
-/** Mints a short-lived browser token for a Gemini Live session with tools. */
-export async function realtimeToken(tools: ToolSet) {
+/**
+ * Mints a short-lived browser token for a Gemini Live session. Tools are not
+ * part of it: the browser runs them and declares them in its session config.
+ */
+export async function realtimeToken() {
   try {
-    const [credentials, definitions] = await Promise.all([
-      gateway.experimental_realtime.getToken({
-        model: LIVE_MODEL,
-        expiresAfterSeconds: 60,
-      }),
-      experimental_getRealtimeToolDefinitions({ tools }),
-    ])
-    return { ...credentials, tools: definitions }
+    return await gateway.experimental_realtime.getToken({
+      model: LIVE_MODEL,
+      expiresAfterSeconds: 60,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error('Realtime setup failed:', message)
-    throw new HttpError(gatewayError(message), 503)
+    throw new HttpError({ message: gatewayError(message), status: 503 })
   }
 }
 

@@ -14,27 +14,39 @@ function contentHash(value: string) {
   return (hash >>> 0).toString(36)
 }
 
-export function previewKey(html: string, w: number, h: number) {
+export function previewKey({
+  html,
+  w,
+  h,
+}: {
+  html: string
+  w: number
+  h: number
+}) {
   return `${contentHash(html)}:${w}:${h}`
 }
 
-export function registerPreview(
-  id: string,
-  frame: HTMLIFrameElement,
-  key: string,
-) {
+export function registerPreview({
+  id,
+  frame,
+  key,
+}: {
+  id: string
+  frame: HTMLIFrameElement
+  key: string
+}) {
   previews.set(id, { frame, key })
   return () => {
     if (previews.get(id)?.frame === frame) previews.delete(id)
   }
 }
 
-export function getPreviewCapture(id: string, key: string) {
+export function getPreviewCapture({ id, key }: { id: string; key: string }) {
   const capture = captures.get(id)
   return capture?.key === key ? capture.dataUrl : undefined
 }
 
-export async function capturePreview(id: string): Promise<string> {
+export async function capturePreview({ id }: { id: string }): Promise<string> {
   const preview = previews.get(id)
   if (!preview?.frame.contentWindow)
     throw new Error('Website is not currently rendered')
@@ -64,8 +76,14 @@ export async function capturePreview(id: string): Promise<string> {
   return dataUrl
 }
 
-export function buildPreviewDocument(html: string, origin: string) {
-  const doc = sandboxedDocument(html, origin)
+export function buildPreviewDocument({
+  html,
+  origin,
+}: {
+  html: string
+  origin: string
+}) {
+  const doc = sandboxedDocument({ html, origin })
   const captureLibrary = doc.createElement('script')
   captureLibrary.src = `${origin}/vendor/html-to-image.js`
   doc.head.append(captureLibrary)

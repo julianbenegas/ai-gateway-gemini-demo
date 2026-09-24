@@ -1,6 +1,6 @@
-import { tool } from 'ai'
 import { z } from 'zod'
 import { replacementsSchema } from '@/lib/replacements'
+import { type ToolCall, toolkit } from '@/lib/tools'
 
 export const annotationSchema = z.object({
   id: z.string(),
@@ -33,31 +33,57 @@ export const annotationSchema = z.object({
   }),
 })
 
-export const editSchema = z.union([
-  z.object({ replacements: replacementsSchema }),
-  z.object({ html: z.string() }),
-])
+export const editHtmlInput = z.object({ replacements: replacementsSchema })
+export const writeHtmlInput = z.object({ html: z.string() })
+
+/** Tools the agent calls on the server, authorized by its session grant. */
+export const serverTools = ['edit_html', 'write_html'] as const
+export type ServerTool = (typeof serverTools)[number]
+
+/** What the studio gives its tools; implemented by the studio component. */
+export type StudioContext = {
+  readSelection: () => Promise<unknown>
+  readHtml: () => Promise<string>
+  editHtml: (
+    args: { input: z.infer<typeof editHtmlInput> } & ToolCall,
+  ) => Promise<unknown>
+  writeHtml: (
+    args: { input: z.infer<typeof writeHtmlInput> } & ToolCall,
+  ) => Promise<unknown>
+}
+
+const tool = toolkit<{ studio: StudioContext }>()
 
 export const siteTools = {
   read_selection: tool({
+    label: 'Looking at your selection',
     description:
       'See the current selected DOM element, its text, source HTML, selector, and annotations attached to elements in this website. Includes freehand drawings as paths relative to their anchor element, with elements crossed or inside the drawing bounds. Nothing is sent automatically. Use for references like this, here, my note, or what I drew. An empty selection is normal.',
-    inputSchema: z.object({}),
+    input: z.object({}),
+    execute: ({ studio }) => studio.readSelection(),
   }),
   read_html: tool({
+    label: 'Reading the website',
     description:
       'Read the complete current source of the website (index.html). Use it when you need source beyond the selection.',
-    inputSchema: z.object({}),
+    input: z.object({}),
+    execute: async ({ studio }) => ({ html: await studio.readHtml() }),
   }),
   edit_html: tool({
+    label: 'Updating the website',
     description:
       'Edit the website with short literal search/replace pairs taken from the current source. Prefer this for copy, CSS, and other localized changes instead of rewriting the page. Replacements run in order, matching the first occurrence unless all:true. Include enough surrounding source to target the intended occurrence. Strings are literal, not regular expressions. Returns match counts; an unmatched or empty search changes nothing and returns the current source so you can adjust.',
-    inputSchema: z.object({ replacements: replacementsSchema }),
+    input: editHtmlInput,
+    execute: ({ studio, input, callId, signal }) =>
+      studio.editHtml({ input, callId, signal }),
   }),
   write_html: tool({
+    label: 'Rewriting the website',
     description:
       'Replace the whole website with a complete, self-contained HTML document. Use for new pages and full redesigns; prefer edit_html for localized changes.',
-    inputSchema: z.object({ html: z.string() }),
+    input: writeHtmlInput,
+    execute: ({ studio, input, callId, signal }) =>
+      studio.writeHtml({ input, callId, signal }),
   }),
 }
 

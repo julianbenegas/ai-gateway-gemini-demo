@@ -22,6 +22,8 @@ export type SiteDocument = {
   html: string
   annotations: SiteAnnotation[]
   persisted: boolean
+  /** Agent edits that can still be undone. */
+  agentEdits: number
 }
 
 export type Design = { id: string; name: string; createdAt: number }
