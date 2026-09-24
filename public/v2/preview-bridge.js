@@ -263,6 +263,32 @@
     },
     true,
   )
+  // In a srcdoc frame, links resolve against the studio's URL, so following
+  // one would leave the design. Anchors scroll within the page instead, links
+  // to other sites open in a new tab, and other pages of this site don't
+  // exist. This runs last, so the site's own click handlers go first.
+  window.addEventListener('click', (event) => {
+    if (mode !== 'browse' || event.defaultPrevented) return
+    const link =
+      event.target instanceof Element && event.target.closest('a[href]')
+    if (!link || link.closest('[data-margin-ui]')) return
+    const href = link.getAttribute('href').trim()
+    if (/^javascript:/i.test(href)) return
+    event.preventDefault()
+    if (href.startsWith('#')) {
+      const id = decodeURIComponent(href.slice(1))
+      const target =
+        id && (document.getElementById(id) || document.getElementsByName(id)[0])
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      else if (!id || id === 'top') scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+    // Only absolute URLs name another site; anything else is a page here.
+    const url = URL.canParse(href) ? new URL(href) : null
+    if (url && ['http:', 'https:', 'mailto:'].includes(url.protocol))
+      port?.postMessage({ type: 'open-link', url: url.href })
+    else port?.postMessage({ type: 'page-link', href })
+  })
   const addPoint = (event) => {
     const element = document
       .elementFromPoint(event.clientX, event.clientY)

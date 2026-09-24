@@ -537,3 +537,40 @@ test('deleting a design asks first and opens another one', async ({ page }) => {
   await page.waitForURL(/\/v2$/)
   await expect(page.getByText('No designs')).toBeVisible()
 })
+
+test('links in the preview stay on the design: anchors scroll, others open elsewhere', async ({
+  page,
+  context,
+}) => {
+  const gateway = await mockGateway(page, '**/v2/api/realtime**')
+  await page.goto('/v2')
+  await createDesign(page)
+  await startVoice(page)
+  await gateway.call('write_html', {
+    html: `<!doctype html><html><head><style>section{min-height:1200px}</style></head><body><nav><a href="#contact">Contact</a> <a href="/about">About</a> <a href="https://example.com" target="_blank">Elsewhere</a> <button onclick="location.href='/away'">Leave</button></nav><h1>Links</h1><section></section><section id="contact"><h2>Contact</h2></section></body></html>`,
+  })
+  const site = preview(page)
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('Links')
+  // Browse mode follows links; talking starts in select mode.
+  await page.getByRole('button', { name: 'Select an element' }).click()
+  const frame = () => page.frames().find((f) => f.url() === 'about:srcdoc')!
+  await site.getByRole('link', { name: 'Contact' }).click()
+  await expect.poll(() => frame().evaluate(() => scrollY)).toBeGreaterThan(1000)
+  await site.getByRole('link', { name: 'About' }).click()
+  await expect(page.locator('[data-notice]')).toContainText(
+    "This design is a single page, so the link to /about doesn't open.",
+  )
+  await context.route('https://example.com/**', (route) =>
+    route.fulfill({ body: 'Elsewhere', contentType: 'text/html' }),
+  )
+  const popup = context.waitForEvent('page')
+  await site.getByRole('link', { name: 'Elsewhere' }).click()
+  await expect(await popup).toHaveURL('https://example.com/')
+  await site.getByRole('button', { name: 'Leave' }).click()
+  await expect(page.locator('[data-notice]')).toContainText(
+    'The page navigated away, so the preview reloaded.',
+  )
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('Links')
+  expect(frame()).toBeTruthy()
+  expect(await gateway.call('read_selection', {})).toHaveProperty('viewport')
+})

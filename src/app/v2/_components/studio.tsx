@@ -80,6 +80,15 @@ export function Studio({
     initial: initialWidth,
   })
   const [error, setError] = useState<string | null>(null)
+  // A passing note about the preview, like a link it can't follow.
+  const [hint, setHint] = useState<string | null>(null)
+  useEffect(() => {
+    if (!hint) return
+    const timer = setTimeout(() => setHint(null), 4000)
+    return () => clearTimeout(timer)
+  }, [hint])
+  // Bumped to remount the preview when its page navigated away.
+  const [reloads, setReloads] = useState(0)
   const [mode, setMode] = useState<StudioMode>('browse')
   const [selection, setSelection] = useState<ElementTarget | null>(null)
   const [positions, setPositions] = useState<AnnotationPosition[]>([])
@@ -331,6 +340,16 @@ export function Studio({
       if (data.type === 'browse') setMode('browse')
       if (data.type === 'positions') setPositions(data.positions)
       if (data.type === 'open-note') setNotesOpen(true)
+      if (data.type === 'open-link') {
+        // From the page's side of the channel, so check it's a web link.
+        const url = URL.canParse(data.url) ? new URL(data.url) : null
+        if (url && ['http:', 'https:', 'mailto:'].includes(url.protocol))
+          window.open(url, '_blank', 'noopener,noreferrer')
+      }
+      if (data.type === 'page-link')
+        setHint(
+          `This design is a single page, so the link to ${String(data.href).slice(0, 60)} doesn't open.`,
+        )
       if (data.type === 'context') {
         const query = queries.current.get(data.requestId)
         if (query) {
@@ -456,13 +475,25 @@ export function Studio({
               // A new iframe per document: changing an iframe's srcDoc
               // navigates it, and every navigation adds browser history.
               <iframe
-                key={preview}
+                key={`${reloads}:${preview}`}
                 ref={frame}
                 title="Website preview"
                 sandbox="allow-scripts"
                 referrerPolicy="no-referrer"
                 srcDoc={preview}
-                onLoad={connectPreview}
+                onLoad={(event) => {
+                  // A second load means the page navigated away from the
+                  // design, as a script can; show the design again.
+                  const loaded = event.currentTarget.dataset
+                  if (loaded.design) {
+                    rejectQueries('The preview reloaded. Try again.')
+                    setHint('The page navigated away, so the preview reloaded.')
+                    setReloads((count) => count + 1)
+                    return
+                  }
+                  loaded.design = 'true'
+                  connectPreview()
+                }}
                 className="absolute inset-0 size-full bg-white scheme-light"
               />
             )}
@@ -479,6 +510,15 @@ export function Studio({
           <div className="absolute inset-0 grid place-items-center">
             <EmptyState title="No designs" action={<NewDesign />} />
           </div>
+        )}
+        {hint && !notice && (
+          <Notice
+            tone="done"
+            className="absolute top-3 left-1/2 -translate-x-1/2"
+            onDismiss={() => setHint(null)}
+          >
+            {hint}
+          </Notice>
         )}
         {notice && (
           <Notice
