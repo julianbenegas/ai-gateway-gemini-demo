@@ -438,6 +438,9 @@ export function Studio({
     context: { studio },
     beforeConnect: startSession,
   })
+  // For the preview's messages, which outlive this render.
+  const latest = useRef({ voice }).current
+  latest.voice = voice
   const endVoice = useCallback(() => {
     voice.end()
     revokeGrant()
@@ -540,6 +543,9 @@ export function Studio({
         void saveDrawing(data.annotation)
       }
       if (data.type === 'browse') setMode('browse')
+      // ⌘D from inside the preview, which keeps the keys it gets.
+      if (data.type === 'toggle-mute' && latest.voice.connected)
+        latest.voice.mute()
       if (data.type === 'positions') setPositions(data.positions)
       if (data.type === 'open-note') setNotesOpen(true)
       if (data.type === 'open-link') {

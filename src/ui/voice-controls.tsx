@@ -8,6 +8,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { Button, IconButton } from './button'
 import { cx } from './cx'
 
@@ -49,6 +50,19 @@ export function VoiceControls({
 }
 
 const levels = ['none', 'low', 'medium', 'high'] as const
+
+/** Whether a key event is ⌘D, or Ctrl+D off a Mac: the mute shortcut. */
+export const isMuteShortcut = (event: {
+  key: string
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+}) =>
+  event.key.toLowerCase() === 'd' &&
+  (event.metaKey || event.ctrlKey) &&
+  !event.altKey &&
+  !event.shiftKey
 
 /** Brain plus three bars, one per level; click for the next level. */
 function ThinkingButton({
@@ -106,6 +120,22 @@ function SessionControls({
   onMute: () => void
   onEnd: () => void
 }) {
+  // ⌘D mutes and unmutes while connected. It runs first, so it wins over the
+  // browser's bookmark and the page's own shortcuts, like tldraw's duplicate.
+  const mute = useRef(onMute)
+  mute.current = onMute
+  const canMute = status.connected && !status.requestingMic
+  useEffect(() => {
+    if (!canMute) return
+    const toggle = (event: KeyboardEvent) => {
+      if (!isMuteShortcut(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      mute.current()
+    }
+    window.addEventListener('keydown', toggle, true)
+    return () => window.removeEventListener('keydown', toggle, true)
+  }, [canMute])
   if (status.connected)
     return (
       <div className="flex items-center gap-0.5">

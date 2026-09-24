@@ -382,6 +382,17 @@
   document.addEventListener(
     'keydown',
     (event) => {
+      // The studio's mute shortcut, ⌘D, from inside the page.
+      if (
+        event.key.toLowerCase() === 'd' &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
+        event.preventDefault()
+        port?.postMessage({ type: 'toggle-mute' })
+        return
+      }
       if (event.key !== 'Escape' || mode === 'browse') return
       stroke = null
       port?.postMessage({ type: 'browse' })

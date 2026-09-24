@@ -814,3 +814,23 @@ test('the preview can show another port of the sandbox, and come back', async ({
     server.close()
   }
 })
+
+test('⌘D mutes and unmutes, also from inside the preview', async ({ page }) => {
+  await openFixture(page)
+  const mute = page.getByRole('button', {
+    name: 'Mute microphone',
+    exact: true,
+  })
+  const unmute = page.getByRole('button', {
+    name: 'Unmute microphone',
+    exact: true,
+  })
+  await page.keyboard.press('ControlOrMeta+d')
+  await expect(unmute).toBeVisible()
+  await page.keyboard.press('ControlOrMeta+d')
+  await expect(mute).toBeVisible()
+  // Focus inside the preview, whose page keeps the keys it gets.
+  await preview(page).getByRole('heading', { level: 1 }).click()
+  await page.keyboard.press('ControlOrMeta+d')
+  await expect(unmute).toBeVisible()
+})
