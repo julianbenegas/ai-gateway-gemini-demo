@@ -2,6 +2,8 @@ export const LIVE_MODEL = 'google/gemini-3.8-live'
 /** Reasons in the background while it keeps talking. */
 export const LIVE_THINKING_MODEL = 'google/gemini-3.8-live-extended-thinking'
 export const VISION_MODEL = 'google/gemini-3.8-flash'
+/** The strongest Gemini 3.8 text model on Gateway; v3's coding agent. */
+export const CODING_MODEL = 'google/gemini-3.8-flash'
 
 /** `none` uses the regular model; the rest, extended thinking at that level. */
 export const thinkingLevels = ['none', 'low', 'medium', 'high'] as const
