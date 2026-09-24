@@ -1,5 +1,6 @@
 'use client'
 
+import type { ThinkingLevel } from '@/lib/models'
 import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { usePathname } from 'next/navigation'
@@ -29,8 +30,8 @@ export function Workspace({
   /** The board in the URL, if any. */
   boardId: string | null
   sidebarWidth: number
-  /** Whether voice starts with extended thinking. */
-  thinking: boolean
+  /** The thinking level voice starts with. */
+  thinking: ThinkingLevel
 }) {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [boards, setBoards] = useState(() =>

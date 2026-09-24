@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
-import { thinkingSessionOptions } from '@/lib/models'
+import {
+  liveProviderOptions,
+  nextThinkingLevel,
+  type ThinkingLevel,
+} from '@/lib/models'
 import { writePreference } from '@/lib/preferences'
 import { realtimeToolDefinitions, type Tools } from '@/lib/tools'
 import { useResponses } from '@/lib/voice/responses'
@@ -23,8 +27,8 @@ export function useVoiceAgent<Context>({
   tokenEndpoint: string
   /** Keep stable, like `tools`. */
   configuration: Experimental_RealtimeSessionConfig
-  /** Extended thinking: whether it starts on, and the cookie that keeps it. */
-  thinking: { initial: boolean; cookie: string }
+  /** The thinking level it starts with, and the cookie that keeps it. */
+  thinking: { initial: ThinkingLevel; cookie: string }
   tools: Tools<Context>
   context: Context | null
   beforeConnect?: () => Promise<unknown>
@@ -34,14 +38,14 @@ export function useVoiceAgent<Context>({
   const sessionConfig = useMemo(
     () => ({
       ...configuration,
-      ...(thinking && thinkingSessionOptions),
+      providerOptions: liveProviderOptions({ thinking }),
       tools: realtimeToolDefinitions({ tools }),
     }),
     [configuration, thinking, tools],
   )
   const session = useVoiceSession({
     // The server mints the token for the model the toggle picks.
-    tokenEndpoint: `${tokenEndpoint}?thinking=${thinking ? 'on' : 'off'}`,
+    tokenEndpoint: `${tokenEndpoint}?thinking=${thinking}`,
     configuration: sessionConfig,
     beforeConnect,
   })
@@ -50,7 +54,7 @@ export function useVoiceAgent<Context>({
     tools,
     context,
   })
-  const response = useResponses({ session })
+  const { thinking: reasoning } = useResponses({ session })
 
   // Where each session began in the transcript, since the model forgets.
   const messages = session.realtime.messages
@@ -81,19 +85,17 @@ export function useVoiceAgent<Context>({
     state: voiceState({
       isPlaying: session.isPlaying,
       isCapturing: session.isCapturing,
-      response: response.state,
+      thinking: reasoning,
       activity,
     }),
     /** The model is chosen when voice connects, so it's fixed during a session. */
     thinking: {
-      enabled: thinking,
+      level: thinking,
       locked: session.connected || session.busy,
-      toggle: () => {
-        writePreference({
-          cookie: thinkingPreference.cookie,
-          value: thinking ? 'off' : 'on',
-        })
-        setThinking(!thinking)
+      cycle: () => {
+        const next = nextThinkingLevel(thinking)
+        writePreference({ cookie: thinkingPreference.cookie, value: next })
+        setThinking(next)
       },
     },
     start: session.start,

@@ -1,5 +1,6 @@
 'use client'
 
+import type { ThinkingLevel } from '@/lib/models'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { download } from '@/lib/download'
@@ -67,8 +68,8 @@ export function Studio({
   /** Null when there are no designs yet. */
   site: SiteDocument | null
   sidebarWidth: number
-  /** Whether voice starts with extended thinking. */
-  thinking: boolean
+  /** The thinking level voice starts with. */
+  thinking: ThinkingLevel
 }) {
   const router = useRouter()
   const [site, setSite] = useState(initialSite)

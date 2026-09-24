@@ -1,3 +1,5 @@
+import { type ThinkingLevel, thinkingLevels } from './models'
+
 /**
  * Per-browser UI preferences kept in cookies, so the server renders them and
  * nothing shifts on load. Each example uses its own names.
@@ -7,8 +9,9 @@ export const preferenceCookie = {
   v2: { sidebar: 'margin_v2_sidebar', thinking: 'margin_v2_thinking' },
 } as const
 
-/** Extended thinking is on unless the cookie turned it off. */
-export const readThinking = (value: string | undefined) => value !== 'off'
+/** The saved thinking level; low by default. */
+export const readThinkingLevel = (value: string | undefined): ThinkingLevel =>
+  thinkingLevels.find((level) => level === value) ?? 'low'
 
 /** Browser-only. */
 export function writePreference({

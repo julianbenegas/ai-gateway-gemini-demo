@@ -2,6 +2,7 @@ import 'server-only'
 import { Elysia } from 'elysia'
 import { z } from 'zod'
 import { apiDefaults, HttpError } from '@/lib/api'
+import { thinkingLevels } from '@/lib/models'
 import { realtimeToken } from '@/lib/realtime'
 import {
   annotationSchema,
@@ -118,9 +119,9 @@ export const api = new Elysia({ prefix: '/v2/api' })
           message: 'Create a design to start voice.',
           status: 401,
         })
-      return realtimeToken({ thinking: query.thinking === 'on' })
+      return realtimeToken({ thinking: query.thinking !== 'none' })
     },
-    { query: z.object({ thinking: z.enum(['on', 'off']).default('on') }) },
+    { query: z.object({ thinking: z.enum(thinkingLevels).default('low') }) },
   )
   .post(
     '/grants',

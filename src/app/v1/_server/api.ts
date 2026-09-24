@@ -4,11 +4,12 @@ import { Elysia } from 'elysia'
 import { z } from 'zod'
 import { apiDefaults, HttpError } from '@/lib/api'
 import { VISION_MODEL } from '@/lib/models'
+import { thinkingLevels } from '@/lib/models'
 import { gatewayError, realtimeToken } from '@/lib/realtime'
 import { loadBoard, saveBoard, snapshotSchema } from './board'
 
 const realtimeQuery = z.object({
-  thinking: z.enum(['on', 'off']).default('on'),
+  thinking: z.enum(thinkingLevels).default('low'),
 })
 
 const inspectSchema = z.object({
@@ -31,7 +32,7 @@ export const api = new Elysia({ prefix: '/v1/api' })
   )
   .post(
     '/realtime',
-    async ({ query }) => realtimeToken({ thinking: query.thinking === 'on' }),
+    async ({ query }) => realtimeToken({ thinking: query.thinking !== 'none' }),
     { query: realtimeQuery },
   )
   .post(

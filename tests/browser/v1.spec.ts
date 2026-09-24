@@ -58,191 +58,6 @@ async function connectVoice(page: Page) {
   ).toBeVisible()
 }
 
-test('incomplete tool arguments keep voice connected and recover with a short edit', async ({
-  page,
-}) => {
-  const gateway = await mockGateway(page)
-  await openWorkspace(page)
-  await connectVoice(page)
-  gateway.send({
-    type: 'function-call-arguments-done',
-    responseId: 'response-cut-off',
-    itemId: 'item-cut-off',
-    callId: 'call-cut-off',
-    name: 'apply_actions',
-    arguments:
-      '{"actions":[{"op":"update","shape":{"id":"shape:forma","props":{"html":"<!doctype html>',
-  })
-  gateway.send({
-    type: 'response-done',
-    responseId: 'response-cut-off',
-    status: 'incomplete',
-    raw: { response: { status_details: { reason: 'max_output_tokens' } } },
-  })
-  await expect.poll(() => gateway.outputs.has('call-cut-off')).toBe(true)
-  expect(gateway.outputs.get('call-cut-off')).toMatchObject({
-    error: expect.stringContaining('not executed'),
-  })
-  await expect(
-    page.getByRole('button', { name: 'Mute microphone', exact: true }),
-  ).toBeVisible()
-  const heading = page
-    .frameLocator('iframe[title="Forma · Starting point"]')
-    .getByRole('heading')
-  await expect(heading).toContainText('Good spaces.')
-  await expect
-    .poll(
-      () =>
-        gateway.sent.filter((event) => event.type === 'response-create').length,
-    )
-    .toBe(1)
-  const result = await gateway.call('edit_html', {
-    id: 'shape:forma',
-    replacements: [{ search: 'Good spaces.', replace: 'Great.' }],
-  })
-  expect(result.updatedIds).toEqual(['shape:forma'])
-  expect(result.matches).toEqual([1])
-  await expect(heading).toContainText('Great.')
-  await expect(page.locator('[data-notice]')).not.toContainText(
-    'Failed to parse',
-  )
-})
-
-function sendIncompleteCall(
-  gateway: Awaited<ReturnType<typeof mockGateway>>,
-  id: string,
-) {
-  const args =
-    '{"actions":[{"op":"update","shape":{"id":"shape:forma","props":{"html":"<!doctype html>'
-  const event = {
-    responseId: `response-${id}`,
-    itemId: `item-${id}`,
-    callId: `call-${id}`,
-    name: 'apply_actions',
-  }
-  gateway.send({ type: 'function-call-arguments-delta', ...event, delta: args })
-  gateway.send({
-    type: 'function-call-arguments-done',
-    ...event,
-    arguments: args,
-  })
-}
-
-test('cancelled or interrupted tool output does not restart the old request', async ({
-  page,
-}) => {
-  const gateway = await mockGateway(page)
-  await openWorkspace(page)
-  await connectVoice(page)
-  sendIncompleteCall(gateway, 'cancelled')
-  gateway.send({
-    type: 'response-done',
-    responseId: 'response-cancelled',
-    status: 'cancelled',
-  })
-  gateway.send({ type: 'response-created', responseId: 'response-interrupted' })
-  gateway.send({
-    type: 'speech-started',
-    audioStartMs: 0,
-    itemId: 'user-interrupt',
-  })
-  sendIncompleteCall(gateway, 'interrupted')
-  gateway.send({
-    type: 'response-done',
-    responseId: 'response-interrupted',
-    status: 'incomplete',
-  })
-  await expect.poll(() => gateway.outputs.has('call-interrupted')).toBe(true)
-  await gateway.call('read_board', {})
-  expect(
-    gateway.sent.filter((event) => event.type === 'response-create'),
-  ).toHaveLength(0)
-  await expect(
-    page.getByRole('button', { name: 'Mute microphone', exact: true }),
-  ).toBeVisible()
-})
-
-test('malformed tool recovery retries once and deduplicates calls', async ({
-  page,
-}) => {
-  const gateway = await mockGateway(page)
-  await openWorkspace(page)
-  await connectVoice(page)
-  for (const id of ['first', 'retry']) {
-    sendIncompleteCall(gateway, id)
-    sendIncompleteCall(gateway, id)
-    gateway.send({
-      type: 'response-done',
-      responseId: `response-${id}`,
-      status: 'incomplete',
-    })
-    await expect.poll(() => gateway.outputs.has(`call-${id}`)).toBe(true)
-  }
-  await expect(page.locator('[data-notice][data-tone="error"]')).toHaveText(
-    /That edit didn’t finish. Still listening./,
-  )
-  expect(
-    gateway.sent.filter((event) => event.type === 'response-create'),
-  ).toHaveLength(1)
-  const outputs = gateway.sent.filter(
-    (event: any) => event.item?.type === 'function-call-output',
-  )
-  expect(outputs).toHaveLength(2)
-  await expect(
-    page.getByRole('button', { name: 'Mute microphone', exact: true }),
-  ).toBeVisible()
-  gateway.send({
-    type: 'speech-started',
-    audioStartMs: 100,
-    itemId: 'user-new',
-  })
-  sendIncompleteCall(gateway, 'new-turn')
-  gateway.send({
-    type: 'response-done',
-    responseId: 'response-new-turn',
-    status: 'incomplete',
-  })
-  await expect
-    .poll(
-      () =>
-        gateway.sent.filter((event) => event.type === 'response-create').length,
-    )
-    .toBe(2)
-})
-
-test('mixed valid and incomplete tool calls produce only one continuation', async ({
-  page,
-}) => {
-  const gateway = await mockGateway(page)
-  await openWorkspace(page)
-  await connectVoice(page)
-  sendIncompleteCall(gateway, 'mixed')
-  gateway.send({
-    type: 'function-call-arguments-done',
-    responseId: 'response-mixed',
-    itemId: 'item-valid',
-    callId: 'call-valid',
-    name: 'read_board',
-    arguments: '{}',
-  })
-  gateway.send({
-    type: 'response-done',
-    responseId: 'response-mixed',
-    status: 'completed',
-  })
-  await expect.poll(() => gateway.outputs.has('call-valid')).toBe(true)
-  await expect
-    .poll(
-      () =>
-        gateway.sent.filter((event) => event.type === 'response-create').length,
-    )
-    .toBe(1)
-  expect(gateway.outputs.has('call-mixed')).toBe(true)
-  await expect(
-    page.getByRole('button', { name: 'Mute microphone', exact: true }),
-  ).toBeVisible()
-})
-
 test('short HTML edits use literal replacements, return unmatched source, and undo together', async ({
   page,
 }) => {
@@ -387,86 +202,30 @@ test('website code and HTML export live in the native context menu', async ({
   ).toHaveCount(0)
 })
 
-test('response failures report their cause and token usage without ending voice', async ({
-  page,
-}) => {
-  const gateway = await mockGateway(page)
-  await openWorkspace(page)
-  await connectVoice(page)
-  gateway.send({ type: 'response-created', responseId: 'limited' })
-  await expect(page.locator('[data-voice-state]')).toContainText('Thinking')
-  gateway.send({
-    type: 'function-call-arguments-delta',
-    responseId: 'limited',
-    itemId: 'item-writing',
-    callId: 'call-writing',
-    delta: '{',
-  })
-  await expect(page.locator('[data-voice-state]')).toContainText('Building')
-  gateway.send({
-    type: 'response-done',
-    responseId: 'limited',
-    status: 'incomplete',
-    raw: {
-      response: {
-        status_details: { reason: 'max_output_tokens' },
-        usage: { input_tokens: 12000, output_tokens: 32000 },
-        output: [{ arguments: 'PRIVATE HTML SHOULD NOT BE LOGGED' }],
-      },
-    },
-  })
-  await expect(page.locator('[data-notice]')).toContainText('output limit')
-  await expect(
-    page.getByRole('button', { name: 'Mute microphone', exact: true }),
-  ).toBeVisible()
-  const diagnostic = await page.evaluate(() =>
-    localStorage.getItem('margin-voice-diagnostics'),
-  )
-  expect(JSON.parse(diagnostic!)[0]).toMatchObject({
-    status: 'incomplete',
-    reason: 'max_output_tokens',
-    inputTokens: 12000,
-    outputTokens: 32000,
-  })
-  expect(diagnostic).not.toContain('PRIVATE HTML')
-  gateway.send({ type: 'speech-started' })
-  gateway.send({
-    type: 'response-done',
-    responseId: 'context-full',
-    status: 'failed',
-    raw: {
-      response: {
-        status_details: { error: { code: 'context_length_exceeded' } },
-      },
-    },
-  })
-  await expect(page.locator('[data-notice]')).toContainText('context limit')
-  await expect(
-    page.getByRole('button', { name: 'Mute microphone', exact: true }),
-  ).toBeVisible()
-})
-
-test('a silent response shows a waiting notice and clears it when progress resumes', async ({
+test('a long thinking silence shows a waiting notice that clears on progress', async ({
   page,
 }) => {
   const gateway = await mockGateway(page)
   await openWorkspace(page)
   await connectVoice(page)
   await page.clock.install()
-  gateway.send({ type: 'speech-stopped' })
+  gateway.send({
+    type: 'custom',
+    rawType: 'interactionStatus',
+    raw: { serverContent: { interactionStatus: 'IN_PROGRESS' } },
+  })
   await expect(page.locator('[data-voice-state]')).toContainText('Thinking')
   await page.clock.fastForward(50000)
   await expect(page.locator('[data-notice]')).toContainText('Still waiting')
   await expect(
     page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
-  gateway.send({ type: 'response-created', responseId: 'resumed' })
-  await expect(page.locator('[data-notice]')).toHaveCount(0)
   gateway.send({
-    type: 'response-done',
-    responseId: 'resumed',
-    status: 'completed',
+    type: 'custom',
+    rawType: 'interactionStatus',
+    raw: { serverContent: { interactionStatus: 'IDLE' } },
   })
+  await expect(page.locator('[data-notice]')).toHaveCount(0)
   await expect(page.locator('[data-voice-state]')).toContainText('Listening')
 })
 
@@ -1009,7 +768,7 @@ test('the open board lives in the URL and the current one renames in place', asy
   await expect(page.locator('[data-website] iframe')).toHaveCount(0)
 })
 
-test('extended thinking is on by default, fixed during a session, and remembered', async ({
+test('the thinking level cycles, is fixed during a session, and is remembered', async ({
   page,
 }) => {
   const tokens: string[] = []
@@ -1018,16 +777,19 @@ test('extended thinking is on by default, fixed during a session, and remembered
   })
   const gateway = await mockGateway(page)
   await openWorkspace(page)
-  const toggle = page.getByRole('button', { name: 'Extended thinking' })
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  const picker = page.getByRole('button', { name: /^Thinking: / })
+  await expect(picker).toHaveAccessibleName('Thinking: low')
   await connectVoice(page)
-  await expect(toggle).toBeDisabled()
-  expect(tokens.at(-1)).toContain('thinking=on')
+  await expect(picker).toBeDisabled()
+  expect(tokens.at(-1)).toContain('thinking=low')
   const session = () =>
     gateway.sent.findLast((event) => event.type === 'session-update')!
       .config as any
   expect(session().providerOptions).toEqual({
-    google: { thinkingConfig: { thinkingLevel: 'low' } },
+    google: {
+      defaultToolBehavior: 'NON_BLOCKING',
+      thinkingConfig: { thinkingLevel: 'low' },
+    },
   })
   // Extended thinking ends the turn and keeps reasoning until it's idle.
   gateway.send({
@@ -1046,20 +808,28 @@ test('extended thinking is on by default, fixed during a session, and remembered
     rawType: 'interactionStatus',
     raw: { serverContent: { interactionStatus: 'IDLE' } },
   })
-  gateway.send({
-    type: 'response-done',
-    responseId: 'answer',
-    status: 'completed',
-  })
   await expect(page.locator('[data-voice-state]')).toContainText('Listening')
   await page.getByRole('button', { name: 'End voice session' }).click()
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  for (const level of ['medium', 'high', 'none', 'low', 'medium'])
+    await picker
+      .click()
+      .then(() => expect(picker).toHaveAccessibleName(`Thinking: ${level}`))
   await page.reload()
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(picker).toHaveAccessibleName('Thinking: medium')
   await connectVoice(page)
-  expect(tokens.at(-1)).toContain('thinking=off')
-  expect(session().providerOptions).toBeUndefined()
+  expect(tokens.at(-1)).toContain('thinking=medium')
+  expect(session().providerOptions.google.thinkingConfig).toEqual({
+    thinkingLevel: 'medium',
+  })
+  await page.getByRole('button', { name: 'End voice session' }).click()
+  await picker.click()
+  await picker.click()
+  await expect(picker).toHaveAccessibleName('Thinking: none')
+  await connectVoice(page)
+  expect(tokens.at(-1)).toContain('thinking=none')
+  expect(session().providerOptions).toEqual({
+    google: { defaultToolBehavior: 'NON_BLOCKING' },
+  })
 })
 
 test('duplicating a board from its context menu copies its shapes', async ({

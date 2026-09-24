@@ -1,5 +1,6 @@
 'use client'
 
+import type { ThinkingLevel } from '@/lib/models'
 import { useEffect, useState } from 'react'
 import { type Attention, trackAttention } from '../_lib/attention'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
@@ -29,7 +30,7 @@ export function CanvasVoice({
   thinking,
 }: {
   editor: Editor | null
-  thinking: boolean
+  thinking: ThinkingLevel
 }) {
   // Tracks pointing from page load, so "here" works in the first request too.
   const [attention, setAttention] = useState<Attention | null>(null)

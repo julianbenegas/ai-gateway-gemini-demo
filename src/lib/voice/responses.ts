@@ -1,162 +1,54 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { recordVoiceResponse, voiceResponseError } from './diagnostics'
 import { useVoiceEvents, type VoiceSession } from './session'
 
 const WAITING =
   'Still waiting for the voice service. You can keep talking or restart voice.'
-const INCOMPLETE_TOOL_CALL =
-  'Tool arguments were incomplete or invalid JSON. This call was not executed. Recover using the source already in context; prefer short targeted replacements for existing content. Do not resend a whole page for a small edit. If a full rewrite was cut off, split it into smaller edits.'
-
-export type ResponseState = 'idle' | 'thinking' | 'writing'
-
-type ResponseRecord = { valid: boolean; invalid: boolean; interrupted: boolean }
 
 /**
- * Follows each model response: whether it is thinking or writing a tool call,
- * a notice when it stalls, errors when it fails, and one automatic retry when
- * a tool call's JSON arrives cut off.
+ * Whether Gemini is reasoning in the background. Extended thinking ends a
+ * turn with `interactionStatus: IN_PROGRESS`, goes quiet, then answers and
+ * reports `IDLE`; a notice appears if that silence lasts too long.
  */
 export function useResponses({ session }: { session: VoiceSession }) {
-  const [state, setState] = useState<ResponseState>('idle')
+  const [thinking, setThinking] = useState(false)
   const lastProgress = useRef(0)
-  const responses = useRef(new Map<string, ResponseRecord>())
-  const answered = useRef(new Set<string>())
-  const retried = useRef(false)
-  // Extended thinking ends a turn and keeps reasoning; see interactionStatus.
-  const backgroundThinking = useRef(false)
-  const { realtime, setError } = session
+  const { setError } = session
+
+  useEffect(() => setThinking(false), [session.generation])
 
   useEffect(() => {
-    setState('idle')
-    responses.current.clear()
-    answered.current.clear()
-    retried.current = false
-    backgroundThinking.current = false
-  }, [session.generation])
-
-  useEffect(() => {
-    if (session.status !== 'connected' || state === 'idle') return
+    if (session.status !== 'connected' || !thinking) return
     const timer = setInterval(() => {
       if (Date.now() - lastProgress.current >= 45000) setError(WAITING)
     }, 5000)
     return () => clearInterval(timer)
-  }, [session.status, state, setError])
+  }, [session.status, thinking, setError])
 
   useVoiceEvents({
     session,
     listener: (event) => {
-      const progress = () => (lastProgress.current = Date.now())
+      const progress = () => {
+        lastProgress.current = Date.now()
+        setError((previous) => (previous === WAITING ? null : previous))
+      }
+      if (
+        event.type === 'audio-delta' ||
+        event.type === 'function-call-arguments-done'
+      )
+        progress()
+      // The user talked over the model.
+      if (event.type === 'speech-started') setThinking(false)
       if (event.type === 'custom' && event.rawType === 'interactionStatus') {
         const status = (
           event.raw as { serverContent?: { interactionStatus?: string } }
         )?.serverContent?.interactionStatus
-        backgroundThinking.current = status === 'IN_PROGRESS'
-      }
-      if (
-        [
-          'response-created',
-          'response-done',
-          'function-call-arguments-delta',
-          'audio-delta',
-          'text-delta',
-        ].includes(event.type)
-      )
-        setError((previous) => (previous === WAITING ? null : previous))
-      if (event.type === 'speech-started') {
-        setError(null)
-        setState('idle')
-        retried.current = false
-        for (const response of responses.current.values())
-          response.interrupted = true
-      }
-      if (
-        event.type === 'speech-stopped' ||
-        event.type === 'response-created'
-      ) {
         progress()
-        setState('thinking')
+        setThinking(status === 'IN_PROGRESS')
       }
-      if (event.type === 'function-call-arguments-delta') {
-        progress()
-        setState('writing')
-      }
-      if (event.type === 'audio-delta' || event.type === 'text-delta')
-        progress()
-      if (
-        event.type === 'response-created' ||
-        event.type === 'function-call-arguments-done'
-      ) {
-        const response = responses.current.get(event.responseId) ?? {
-          valid: false,
-          invalid: false,
-          interrupted: false,
-        }
-        responses.current.set(event.responseId, response)
-        if (event.type === 'function-call-arguments-done') {
-          try {
-            JSON.parse(event.arguments)
-            response.valid = true
-          } catch {
-            response.invalid = true
-            if (!answered.current.has(event.callId)) {
-              answered.current.add(event.callId)
-              realtime.addToolOutput(event.callId, {
-                error: INCOMPLETE_TOOL_CALL,
-              })
-            }
-          }
-        }
-      }
-      if (event.type !== 'response-done') return
-      progress()
-      setState('idle')
-      const response = responses.current.get(event.responseId)
-      responses.current.delete(event.responseId)
-      const details = recordVoiceResponse({
-        responseId: event.responseId,
-        status: event.status,
-        raw: event.raw,
-      })
-      // A valid tool call means the model continues once it has the result,
-      // and extended thinking keeps reasoning after the turn ends.
-      if (
-        backgroundThinking.current ||
-        (response?.valid &&
-          !response.interrupted &&
-          event.status !== 'cancelled')
-      )
-        setState('thinking')
-      if (
-        event.status === 'failed' ||
-        (event.status === 'incomplete' && !response?.invalid)
-      ) {
-        setState('idle')
-        setError(
-          voiceResponseError({
-            status: event.status,
-            reason: details.errorCode ?? details.reason,
-          }),
-        )
-      }
-      if (
-        !response?.invalid ||
-        response.valid ||
-        response.interrupted ||
-        event.status === 'cancelled'
-      )
-        return
-      if (
-        !retried.current &&
-        (event.status === 'completed' || event.status === 'incomplete')
-      ) {
-        retried.current = true
-        setState('thinking')
-        realtime.requestResponse()
-      } else setError('That edit didn’t finish. Still listening.')
     },
   })
 
-  return { state }
+  return { thinking }
 }

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { Button, IconButton } from '@/ui/button'
 import type { UIMessage } from 'ai'
+import type { ThinkingLevel } from '@/lib/models'
 import { toolLabels, Transcript } from '@/ui/transcript'
 import { VoiceControls, type VoiceStatus } from '@/ui/voice-controls'
 import { siteTools } from '../_lib/tools'
@@ -46,7 +47,7 @@ export function StudioDock({
     messages: UIMessage[]
     sessionStarts: number[]
     sendText: ((text: string) => void) | null
-    thinking: { enabled: boolean; locked: boolean; toggle: () => void }
+    thinking: { level: ThinkingLevel; locked: boolean; cycle: () => void }
   }
   transcriptOpen: boolean
   onToggleTranscript: () => void

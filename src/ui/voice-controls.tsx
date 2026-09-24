@@ -26,24 +26,14 @@ export function VoiceControls({
   transcript,
   ...props
 }: Parameters<typeof SessionControls>[0] & {
-  /** A toggle for the model's extended thinking, fixed while connected. */
-  thinking?: { enabled: boolean; locked: boolean; toggle: () => void }
+  /** Cycles the model's thinking level; fixed while connected. */
+  thinking?: Parameters<typeof ThinkingButton>[0]
   /** Shows a transcript toggle. */
   transcript?: { open: boolean; onToggle: () => void }
 }) {
   return (
     <div className="flex items-center gap-0.5">
-      {thinking && (
-        <IconButton
-          label="Extended thinking"
-          aria-pressed={thinking.enabled}
-          disabled={thinking.locked}
-          onClick={thinking.toggle}
-          variant="toggle"
-        >
-          <Brain size={15} />
-        </IconButton>
-      )}
+      {thinking && <ThinkingButton {...thinking} />}
       <SessionControls {...props} />
       {transcript && (
         <IconButton
@@ -55,6 +45,47 @@ export function VoiceControls({
         </IconButton>
       )}
     </div>
+  )
+}
+
+const levels = ['none', 'low', 'medium', 'high'] as const
+
+/** Brain plus three bars, one per level; click for the next level. */
+function ThinkingButton({
+  level,
+  locked,
+  cycle,
+}: {
+  level: (typeof levels)[number]
+  locked: boolean
+  cycle: () => void
+}) {
+  const filled = levels.indexOf(level)
+  const label = `Thinking: ${level}`
+  return (
+    <Button
+      variant="toggle"
+      aria-label={label}
+      title={label}
+      aria-pressed={level !== 'none'}
+      disabled={locked}
+      onClick={cycle}
+      className="gap-1.5 px-1.5"
+    >
+      <Brain size={15} />
+      <span aria-hidden className="flex h-3 items-end gap-px">
+        {[1, 2, 3].map((bar) => (
+          <span
+            key={bar}
+            className={cx(
+              'w-0.5',
+              bar === 1 ? 'h-1' : bar === 2 ? 'h-2' : 'h-3',
+              bar <= filled ? 'bg-current' : 'bg-current/25',
+            )}
+          />
+        ))}
+      </span>
+    </Button>
   )
 }
 

@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
 import { z } from 'zod'
-import { preferenceCookie, readThinking } from '@/lib/preferences'
+import { preferenceCookie, readThinkingLevel } from '@/lib/preferences'
 import { clampSidebar } from '@/ui/sidebar'
 import { Studio } from '../_components/studio'
 import { owner } from '../_server/auth'
@@ -24,7 +24,7 @@ export default async function Page({
     sidebarWidth: clampSidebar(
       Number(cookieStore.get(preferenceCookie.v2.sidebar)?.value),
     ),
-    thinking: readThinking(
+    thinking: readThinkingLevel(
       cookieStore.get(preferenceCookie.v2.thinking)?.value,
     ),
   }

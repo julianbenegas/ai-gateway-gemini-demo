@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
-import { preferenceCookie, readThinking } from '@/lib/preferences'
+import { preferenceCookie, readThinkingLevel } from '@/lib/preferences'
 import { clampSidebar } from '@/ui/sidebar'
 import { Workspace } from '../_components/workspace'
 import { loadBoard } from '../_server/board'
@@ -24,7 +24,7 @@ export default async function Page({
       sidebarWidth={clampSidebar(
         Number(cookieStore.get(preferenceCookie.v1.sidebar)?.value),
       )}
-      thinking={readThinking(
+      thinking={readThinkingLevel(
         cookieStore.get(preferenceCookie.v1.thinking)?.value,
       )}
     />

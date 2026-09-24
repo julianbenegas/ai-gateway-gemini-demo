@@ -67,8 +67,6 @@ export function useVoiceSession({
       for (const listener of listeners.current) listener(event)
     },
     onError: (error) => {
-      // Reported through the malformed-call recovery instead.
-      if (error.message.startsWith('Failed to parse tool arguments:')) return
       epoch.current++
       ending.current = true
       abort.current.abort()
