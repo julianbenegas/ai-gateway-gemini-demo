@@ -1,3 +1,5 @@
+import type { SiteFiles } from './files'
+
 export type ElementTarget = {
   id: string
   tag: string
@@ -9,6 +11,8 @@ export type ElementTarget = {
 
 export type SiteAnnotation = {
   id: string
+  /** The page it was made on, like index.html. */
+  page: string
   target: ElementTarget
   comment: string
   drawing?: {
@@ -19,13 +23,16 @@ export type SiteAnnotation = {
 
 export type SiteDocument = {
   id: string
-  html: string
+  files: SiteFiles
   annotations: SiteAnnotation[]
   /** Agent edits that can still be undone. */
   agentEdits: number
 }
 
 export type Design = { id: string; name: string; createdAt: number }
+
+/** What the preview shows: the page's file, or null where there is none. */
+export type PreviewPage = { file: string | null; path: string }
 
 export type AnnotationPosition = {
   id: string

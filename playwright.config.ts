@@ -17,9 +17,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    // A dedicated server whose boards live in memory, never in real Redis.
+    // A dedicated server whose boards live in memory, never in real Redis,
+    // with v2's previews on this machine instead of in Vercel Sandbox.
     command:
-      'NEXT_DIST_DIR=.next-test MARGIN_STORE=memory pnpm dev --port 3100',
+      'NEXT_DIST_DIR=.next-test MARGIN_STORE=memory MARGIN_V2_PREVIEW=local pnpm dev --port 3100',
     url: 'http://localhost:3100',
     reuseExistingServer: false,
   },

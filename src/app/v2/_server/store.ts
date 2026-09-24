@@ -1,16 +1,19 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { HttpError } from '@/lib/api'
 import { redis } from '@/lib/redis'
 import { applyReplacements, type Replacement } from '@/lib/replacements'
+import { HOME, type SiteFiles } from '../_lib/files'
 import { annotationSchema, type ServerTool } from '../_lib/tools'
 import type { Design, SiteAnnotation, SiteDocument } from '../_lib/types'
-import { BLANK_DESIGN_HTML, prepareHtml } from './html'
+import { BLANK_DESIGN_HTML, prepareFile } from './html'
 
 /**
- * One Redis hash per design with `html` and `annotations` fields, so saving a
- * note never overwrites a concurrent page edit. Page edits are last-write-wins.
- * Every agent edit pushes the previous HTML onto a history list for undo.
+ * One Redis hash per design with `files` and `annotations` fields, so saving a
+ * note never overwrites a concurrent page edit. File edits are last-write-wins.
+ * Every agent edit pushes the file's previous content onto a history list for
+ * undo. The preview's sandbox gets a copy of the files; see preview.ts.
  */
 export type DesignRef = { owner: string; id: string }
 
@@ -20,32 +23,44 @@ const historyKey = ({ owner, id }: DesignRef) =>
   `margin:v2:history:${owner}:${id}`
 const designsKey = (owner: string) => `margin:v2:designs:${owner}`
 const HISTORY_LIMIT = 50
+const MAX_FILES = 40
+const MAX_FILE_BYTES = 200_000
 
 type HistoryEntry = {
-  html: string
+  path: string
+  /** What the file held before the edit; null if the edit created it. */
+  content: string | null
   tool: ServerTool
   callId: string
   at: number
 }
+// Designs used to be a single page, stored as `html`.
+type LegacyEntry = { html: string }
+
+const siteFiles = z.record(z.string(), z.string())
 
 export async function readDesign(ref: DesignRef): Promise<SiteDocument> {
   const [fields, agentEdits] = await Promise.all([
-    redis().hmget<{ html: unknown; annotations: unknown }>(
+    redis().hmget<{ files: unknown; html: unknown; annotations: unknown }>(
       designKey(ref),
+      'files',
       'html',
       'annotations',
     ),
     redis().llen(historyKey(ref)),
   ])
-  if (typeof fields?.html !== 'string')
+  const files =
+    siteFiles.safeParse(fields?.files).data ??
+    (typeof fields?.html === 'string' ? { [HOME]: fields.html } : null)
+  if (!files)
     throw new HttpError({
       message: 'This design could not be found.',
       status: 404,
     })
-  const annotations = annotationSchema.array().safeParse(fields.annotations)
+  const annotations = annotationSchema.array().safeParse(fields?.annotations)
   return {
     id: ref.id,
-    html: fields.html,
+    files,
     annotations: annotations.success ? annotations.data : [],
     agentEdits,
   }
@@ -70,7 +85,7 @@ export async function createDesign({ owner }: { owner: string }) {
   await redis()
     .multi()
     .hset(designKey({ owner, id }), {
-      html: BLANK_DESIGN_HTML,
+      files: { [HOME]: BLANK_DESIGN_HTML },
       annotations: [],
     })
     .hset(designsKey(owner), { [id]: design })
@@ -98,7 +113,7 @@ export async function renameDesign({
   return renamed
 }
 
-/** Copies a design's page and notes into a new design; history stays behind. */
+/** Copies a design's files and notes into a new design; history stays behind. */
 export async function duplicateDesign(ref: DesignRef) {
   const [site, designs] = await Promise.all([
     readDesign(ref),
@@ -112,7 +127,7 @@ export async function duplicateDesign(ref: DesignRef) {
   await redis()
     .multi()
     .hset(designKey({ owner: ref.owner, id: copy.id }), {
-      html: site.html,
+      files: site.files,
       annotations: site.annotations,
     })
     .hset(designsKey(ref.owner), { [copy.id]: copy })
@@ -131,7 +146,44 @@ export async function deleteDesign(ref: DesignRef) {
   return { ok: true }
 }
 
-/** Applies an agent edit, keeping the previous HTML for undo. */
+export type FileEdit =
+  | { path: string; replacements: Replacement[] }
+  | { path: string; content: string }
+  | { path: string; delete: true }
+
+/** The file's content after an edit, or null when the edit deletes it. */
+function applyEdit({ edit, current }: { edit: FileEdit; current?: string }) {
+  if ('delete' in edit) {
+    if (edit.path === HOME)
+      throw new HttpError({
+        message: `${HOME} is the home page, so it stays; rewrite it instead.`,
+        status: 400,
+      })
+    if (current === undefined)
+      throw new HttpError({
+        message: `There is no ${edit.path}.`,
+        status: 404,
+      })
+    return { content: null }
+  }
+  if ('content' in edit)
+    return { content: prepareFile({ path: edit.path, content: edit.content }) }
+  if (current === undefined)
+    throw new HttpError({
+      message: `There is no ${edit.path}. Create it with write_file.`,
+      status: 404,
+    })
+  const result = applyReplacements({
+    html: current,
+    replacements: edit.replacements,
+  })
+  return {
+    content: prepareFile({ path: edit.path, content: result.html }),
+    matches: result.matches,
+  }
+}
+
+/** Applies an agent edit to one file, keeping its previous content for undo. */
 export async function editDesign({
   ref,
   edit,
@@ -139,27 +191,40 @@ export async function editDesign({
   callId,
 }: {
   ref: DesignRef
-  edit: { replacements: Replacement[] } | { html: string }
+  edit: FileEdit
   tool: ServerTool
   callId: string
 }) {
   const site = await readDesign(ref)
-  const result =
-    'html' in edit
-      ? { html: edit.html, matches: undefined }
-      : applyReplacements({ html: site.html, replacements: edit.replacements })
-  const html = prepareHtml({ html: result.html })
+  const previous = Object.hasOwn(site.files, edit.path)
+    ? site.files[edit.path]
+    : undefined
+  const { content, matches } = applyEdit({ edit, current: previous })
+  const files: SiteFiles = { ...site.files }
+  if (content === null) delete files[edit.path]
+  else files[edit.path] = content
+  if (content !== null && Buffer.byteLength(content) > MAX_FILE_BYTES)
+    throw new HttpError({
+      message: `${edit.path} is too large. Keep each file under 200 KB.`,
+      status: 413,
+    })
+  if (Object.keys(files).length > MAX_FILES)
+    throw new HttpError({
+      message: `A design holds up to ${MAX_FILES} files.`,
+      status: 413,
+    })
   let { agentEdits } = site
-  if (html !== site.html) {
+  if (content !== (previous ?? null)) {
     const entry: HistoryEntry = {
-      html: site.html,
+      path: edit.path,
+      content: previous ?? null,
       tool,
       callId,
       at: Date.now(),
     }
     const [, , , length] = await redis()
       .multi()
-      .hset(designKey(ref), { html })
+      .hset(designKey(ref), { files })
       .lpush(historyKey(ref), entry)
       .ltrim(historyKey(ref), 0, HISTORY_LIMIT - 1)
       .llen(historyKey(ref))
@@ -167,21 +232,26 @@ export async function editDesign({
     agentEdits = length
   }
   return {
-    site: { ...site, html, agentEdits },
-    matches: result.matches,
-    missed: !!result.matches?.includes(0),
+    site: { ...site, files, agentEdits },
+    matches,
+    missed: !!matches?.includes(0),
   }
 }
 
-/** Restores the HTML from before the most recent agent edit. */
+/** Restores the file the most recent agent edit changed. */
 export async function undoAgentEdit(ref: DesignRef) {
-  const entry = await redis().lpop<HistoryEntry>(historyKey(ref))
+  const entry = await redis().lpop<HistoryEntry | LegacyEntry>(historyKey(ref))
   if (!entry)
     throw new HttpError({
       message: 'There is no agent edit to undo.',
       status: 404,
     })
-  await redis().hset(designKey(ref), { html: entry.html })
+  const { path, content } =
+    'html' in entry ? { path: HOME, content: entry.html } : entry
+  const files: SiteFiles = { ...(await readDesign(ref)).files }
+  if (content === null) delete files[path]
+  else files[path] = content
+  await redis().hset(designKey(ref), { files })
   return readDesign(ref)
 }
 

@@ -2,7 +2,7 @@ import type { z } from 'zod'
 import { rpc, unwrap } from '@/lib/rpc'
 import type { ToolCall } from '@/lib/tools'
 import type { Api } from '../_server/api'
-import type { editHtmlInput, writeHtmlInput } from './tools'
+import type { deleteFileInput, editFileInput, writeFileInput } from './tools'
 import type { SiteAnnotation } from './types'
 
 const api = rpc<Api>().v2.api
@@ -18,6 +18,7 @@ export const studioApi = {
   duplicateDesign: ({ id }: { id: string }) =>
     unwrap(design(id).duplicate.post()),
   undoAgentEdit: ({ id }: { id: string }) => unwrap(design(id).undo.post()),
+  showPreview: ({ id }: { id: string }) => unwrap(design(id).preview.post()),
   saveAnnotation: ({
     id,
     annotation,
@@ -49,26 +50,38 @@ const agentHeaders = ({
 
 /** The agent's calls, authorized by the voice session's grant. */
 export const agentApi = {
-  editHtml: ({
+  editFile: ({
     grant,
     input,
     callId,
     signal,
-  }: { grant: string; input: z.infer<typeof editHtmlInput> } & ToolCall) =>
+  }: { grant: string; input: z.infer<typeof editFileInput> } & ToolCall) =>
     unwrap(
-      api.agent.edit_html.post(input, {
+      api.agent.edit_file.post(input, {
         headers: agentHeaders({ grant, callId }),
         fetch: { signal },
       }),
     ),
-  writeHtml: ({
+  writeFile: ({
     grant,
     input,
     callId,
     signal,
-  }: { grant: string; input: z.infer<typeof writeHtmlInput> } & ToolCall) =>
+  }: { grant: string; input: z.infer<typeof writeFileInput> } & ToolCall) =>
     unwrap(
-      api.agent.write_html.post(input, {
+      api.agent.write_file.post(input, {
+        headers: agentHeaders({ grant, callId }),
+        fetch: { signal },
+      }),
+    ),
+  deleteFile: ({
+    grant,
+    input,
+    callId,
+    signal,
+  }: { grant: string; input: z.infer<typeof deleteFileInput> } & ToolCall) =>
+    unwrap(
+      api.agent.delete_file.post(input, {
         headers: agentHeaders({ grant, callId }),
         fetch: { signal },
       }),

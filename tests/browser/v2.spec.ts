@@ -2,8 +2,9 @@ import { test, expect, type Page } from '@playwright/test'
 import { mockGateway } from './gateway'
 import type { SiteDocument } from '../../src/app/v2/_lib/types'
 
-// These run against the real v2 API, whose store is in memory for tests.
-// Only the Gateway WebSocket is simulated.
+// These run against the real v2 API, whose store is in memory for tests, and
+// the real preview server, run locally instead of in a Vercel Sandbox. Only
+// the Gateway WebSocket is simulated.
 
 const FIXTURE = `<!doctype html><html><head><style>body{margin:0;font-family:Georgia,serif;background:#f4f1ea;color:#28372f}main{padding:80px;min-height:2400px}h1{font-size:72px;font-weight:400;margin:0 0 24px}</style></head><body><main><h1>Good spaces. Better living.</h1><p>Thoughtful places for the everyday.</p></main></body></html>`
 
@@ -37,7 +38,7 @@ async function openFixture(page: Page) {
   await page.goto('/v2')
   const id = await createDesign(page)
   await startVoice(page)
-  await gateway.call('write_html', { html: FIXTURE })
+  await gateway.call('write_file', { path: 'index.html', content: FIXTURE })
   await expect(preview(page).getByRole('heading', { level: 1 })).toContainText(
     'Good spaces.',
   )
@@ -51,7 +52,7 @@ async function savedDesign(page: Page, id: string) {
 }
 
 function replaceCopy(search: string, replace: string) {
-  return { replacements: [{ search, replace }] }
+  return { path: 'index.html', replacements: [{ search, replace }] }
 }
 
 async function drawOnHeading(page: Page) {
@@ -153,7 +154,7 @@ test('freehand drawings stay anchored, persist, and give the agent DOM context o
   expect(
     gateway.sent.filter((event: any) => event.item?.type === 'text-message'),
   ).toEqual([])
-  await gateway.call('edit_html', replaceCopy('Good spaces.', 'Great spaces.'))
+  await gateway.call('edit_file', replaceCopy('Good spaces.', 'Great spaces.'))
   await expect(preview(page).getByRole('heading', { level: 1 })).toContainText(
     'Great spaces.',
   )
@@ -228,18 +229,18 @@ test('v2 owns its session before exposing remote file and voice tools', async ({
     data: { name: 'Mine' },
   })
   expect(rename.status()).toBe(401)
-  const write = await request.post('/v2/api/agent/write_html', {
+  const write = await request.post('/v2/api/agent/write_file', {
     headers: { ...headers, 'x-tool-call-id': 'call-1' },
-    data: { html: '<h1>Mine</h1>' },
+    data: { path: 'index.html', content: '<h1>Mine</h1>' },
   })
   expect(write.status()).toBe(401)
-  const forged = await request.post('/v2/api/agent/write_html', {
+  const forged = await request.post('/v2/api/agent/write_file', {
     headers: {
       ...headers,
       authorization: 'Bearer not-a-real-grant-token-at-all',
       'x-tool-call-id': 'call-2',
     },
-    data: { html: '<h1>Mine</h1>' },
+    data: { path: 'index.html', content: '<h1>Mine</h1>' },
   })
   expect(forged.status()).toBe(401)
   const voice = await request.post('/v2/api/realtime', { headers })
@@ -248,10 +249,14 @@ test('v2 owns its session before exposing remote file and voice tools', async ({
     headers: { Origin: 'https://another.example' },
   })
   expect(foreign.status()).toBe(403)
-  const foreignWrite = await request.post('/v2/api/agent/write_html', {
+  const foreignWrite = await request.post('/v2/api/agent/write_file', {
     headers: { Origin: 'https://another.example', 'x-tool-call-id': 'call-3' },
-    data: { html: '<h1>Mine</h1>' },
+    data: { path: 'index.html', content: '<h1>Mine</h1>' },
   })
+  const preview = await request.post(`/v2/api/designs/${designId}/preview`, {
+    headers,
+  })
+  expect(preview.status()).toBe(401)
   expect(foreignWrite.status()).toBe(403)
 })
 
@@ -285,16 +290,16 @@ test('notes target DOM elements, and agent edits reload from the server', async 
     attached: true,
     target: { id: selection.selection.id },
   })
-  const source = await gateway.call('read_html', {})
-  expect(source.html).toContain(selection.selection.id)
+  const source = await gateway.call('read_file', { path: 'index.html' })
+  expect(source.content).toContain(selection.selection.id)
   const missed = await gateway.call(
-    'edit_html',
+    'edit_file',
     replaceCopy('Not on this page', 'Nothing'),
   )
   expect(missed.matches).toEqual([0])
-  expect(missed.html).toContain('Good spaces.')
+  expect(missed.content).toContain('Good spaces.')
   const edit = await gateway.call(
-    'edit_html',
+    'edit_file',
     replaceCopy('Good spaces. Better living.', 'Great.'),
   )
   expect(edit).toEqual({ ok: true, matches: [1] })
@@ -322,7 +327,7 @@ test('notes target DOM elements, and agent edits reload from the server', async 
   await expect(page.locator('[data-notes] article')).toHaveCount(0)
   await page.getByRole('button', { name: 'View website source' }).click()
   await expect(
-    page.getByRole('textbox', { name: 'Website HTML source' }),
+    page.getByRole('textbox', { name: 'Source of index.html' }),
   ).toHaveValue(/Great\./)
 })
 
@@ -343,8 +348,10 @@ test('a deleted target stays identifiable in its note without blocking further e
   await expect(
     page.getByRole('button', { name: 'Show annotations' }),
   ).toBeVisible()
-  await gateway.call('write_html', {
-    html: '<!doctype html><html><body><h1 data-margin-id="new-heading">A new page</h1></body></html>',
+  await gateway.call('write_file', {
+    path: 'index.html',
+    content:
+      '<!doctype html><html><body><h1 data-margin-id="new-heading">A new page</h1></body></html>',
   })
   await expect(preview(page).getByRole('heading')).toHaveText('A new page')
   await expect
@@ -356,7 +363,7 @@ test('a deleted target stays identifiable in its note without blocking further e
   const context = await gateway.call('read_selection', {})
   expect(context.selection).toBeNull()
   expect(context.annotations[0].target.text).toContain('Good spaces.')
-  await gateway.call('edit_html', replaceCopy('A new page', 'Another idea'))
+  await gateway.call('edit_file', replaceCopy('A new page', 'Another idea'))
   await expect(preview(page).getByRole('heading')).toHaveText('Another idea')
 })
 
@@ -389,7 +396,7 @@ test('cancelling voice setup prevents a late connection', async ({ page }) => {
 
 test('the sidebar opens independent designs by URL', async ({ page }) => {
   const { id: first, gateway } = await openFixture(page)
-  await gateway.call('edit_html', replaceCopy('Good spaces.', 'First design.'))
+  await gateway.call('edit_file', replaceCopy('Good spaces.', 'First design.'))
   await expect(preview(page).getByRole('heading', { level: 1 })).toContainText(
     'First design.',
   )
@@ -430,18 +437,18 @@ test('agent edits carry the voice session grant and can be undone', async ({
   const grant = agentRequests[0].headers.authorization
   expect(grant).toMatch(/^Bearer [\w-]{20,}$/)
   await gateway.call(
-    'edit_html',
+    'edit_file',
     replaceCopy('Good spaces.', 'Great.'),
     'edit-call',
   )
   expect(agentRequests.at(-1)).toMatchObject({
-    url: expect.stringContaining('/v2/api/agent/edit_html'),
+    url: expect.stringContaining('/v2/api/agent/edit_file'),
     headers: { authorization: grant, 'x-tool-call-id': 'edit-call' },
   })
   const heading = preview(page).getByRole('heading', { level: 1 })
   await expect(heading).toContainText('Great.')
-  const invalid = await gateway.call('write_html', { markup: 'nope' })
-  expect(invalid.error).toContain('Invalid write_html arguments')
+  const invalid = await gateway.call('write_file', { markup: 'nope' })
+  expect(invalid.error).toContain('Invalid write_file arguments')
   const unknown = await gateway.call('delete_site', {})
   expect(unknown.error).toBe('Unknown tool: delete_site')
   const undo = page.getByRole('button', { name: 'Undo agent edit' })
@@ -460,7 +467,7 @@ test('agent edits carry the voice session grant and can be undone', async ({
       ),
     )
     .toBe(true)
-  const replay = await page.request.post('/v2/api/agent/edit_html', {
+  const replay = await page.request.post('/v2/api/agent/edit_file', {
     headers: {
       authorization: grant,
       'x-tool-call-id': 'replay',
@@ -538,7 +545,7 @@ test('deleting a design asks first and opens another one', async ({ page }) => {
   await expect(page.getByText('No designs')).toBeVisible()
 })
 
-test('links in the preview stay on the design: anchors scroll, others open elsewhere', async ({
+test('links in the preview open pages of the site, and other sites elsewhere', async ({
   page,
   context,
 }) => {
@@ -546,20 +553,29 @@ test('links in the preview stay on the design: anchors scroll, others open elsew
   await page.goto('/v2')
   await createDesign(page)
   await startVoice(page)
-  await gateway.call('write_html', {
-    html: `<!doctype html><html><head><style>section{min-height:1200px}</style></head><body><nav><a href="#contact">Contact</a> <a href="/about">About</a> <a href="https://example.com" target="_blank">Elsewhere</a> <button onclick="location.href='/away'">Leave</button></nav><h1>Links</h1><section></section><section id="contact"><h2>Contact</h2></section></body></html>`,
+  await gateway.call('write_file', {
+    path: 'about.html',
+    content: `<!doctype html><html><body><h1>About</h1><a href="/">Home</a></body></html>`,
+  })
+  await gateway.call('write_file', {
+    path: 'index.html',
+    content: `<!doctype html><html><head><style>section{min-height:1200px}</style></head><body><nav><a href="#contact">Contact</a> <a href="/about">About</a> <a href="https://example.com" target="_blank">Elsewhere</a> <button onclick="location.href='https://example.com/away'">Leave</button></nav><h1>Links</h1><section></section><section id="contact"><h2>Contact</h2></section></body></html>`,
   })
   const site = preview(page)
   await expect(site.getByRole('heading', { level: 1 })).toHaveText('Links')
   // Browse mode follows links; talking starts in select mode.
   await page.getByRole('button', { name: 'Select an element' }).click()
-  const frame = () => page.frames().find((f) => f.url() === 'about:srcdoc')!
+  const frame = () =>
+    page.frames().find((f) => f.name() === '' && f !== page.mainFrame())!
   await site.getByRole('link', { name: 'Contact' }).click()
   await expect.poll(() => frame().evaluate(() => scrollY)).toBeGreaterThan(1000)
   await site.getByRole('link', { name: 'About' }).click()
-  await expect(page.locator('[data-notice]')).toContainText(
-    "This design is a single page, so the link to /about doesn't open.",
-  )
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('About')
+  await expect
+    .poll(async () => (await gateway.call('read_selection', {})).page)
+    .toEqual({ file: 'about.html', path: '/about' })
+  await site.getByRole('link', { name: 'Home' }).click()
+  await expect(site.getByRole('heading', { level: 1 })).toHaveText('Links')
   await context.route('https://example.com/**', (route) =>
     route.fulfill({ body: 'Elsewhere', contentType: 'text/html' }),
   )
@@ -568,9 +584,94 @@ test('links in the preview stay on the design: anchors scroll, others open elsew
   await expect(await popup).toHaveURL('https://example.com/')
   await site.getByRole('button', { name: 'Leave' }).click()
   await expect(page.locator('[data-notice]')).toContainText(
-    'The page navigated away, so the preview reloaded.',
+    'The page left the website, so the preview reloaded.',
   )
   await expect(site.getByRole('heading', { level: 1 })).toHaveText('Links')
-  expect(frame()).toBeTruthy()
-  expect(await gateway.call('read_selection', {})).toHaveProperty('viewport')
+  await expect
+    .poll(async () => (await gateway.call('read_selection', {})).viewport)
+    .toBeTruthy()
+})
+
+test('pages are files at their own URLs, each with its own notes', async ({
+  page,
+}) => {
+  const { id, gateway } = await openFixture(page)
+  await gateway.call('write_file', {
+    path: 'styles.css',
+    content: 'h1 { color: rgb(200, 0, 0) }',
+  })
+  await gateway.call('write_file', {
+    path: 'work/index.html',
+    content: `<!doctype html><html><head><link rel="stylesheet" href="/styles.css"></head><body><h1>Our work</h1><a href="/">Home</a></body></html>`,
+  })
+  expect(await gateway.call('list_files', {})).toMatchObject({
+    files: [
+      { path: 'index.html' },
+      { path: 'styles.css' },
+      { path: 'work/index.html' },
+    ],
+    page: { file: 'index.html', path: '/' },
+  })
+  expect(await gateway.call('open_page', { path: 'work/index.html' })).toEqual({
+    ok: true,
+    url: '/work/',
+  })
+  const heading = preview(page).getByRole('heading', { level: 1 })
+  await expect(heading).toHaveText('Our work')
+  await expect(heading).toHaveCSS('color', 'rgb(200, 0, 0)')
+  await heading.click({ position: { x: 10, y: 10 } })
+  await page
+    .getByRole('button', { name: 'Add annotation', exact: true })
+    .click()
+  await page
+    .getByRole('textbox', { name: 'Note on this h1' })
+    .fill('Show more projects.')
+  await page.getByRole('button', { name: 'Add note', exact: true }).click()
+  await expect
+    .poll(async () => (await savedDesign(page, id)).annotations)
+    .toMatchObject([
+      { page: 'work/index.html', comment: 'Show more projects.' },
+    ])
+  await page.getByRole('button', { name: 'Select an element' }).click()
+  await preview(page).getByRole('link', { name: 'Home' }).click()
+  await expect(heading).toContainText('Good spaces.')
+  await expect(
+    preview(page).getByRole('button', { name: 'Annotation 1' }),
+  ).toHaveCount(0)
+  const context = await gateway.call('read_selection', {})
+  expect(context.annotations).toEqual([])
+  expect(context.otherPages).toMatchObject([
+    { page: 'work/index.html', comment: 'Show more projects.' },
+  ])
+  await page.getByRole('button', { name: 'Show annotations' }).click()
+  await expect(page.locator('[data-notes]')).toContainText('On work/index.html')
+  expect(
+    (await gateway.call('delete_file', { path: 'index.html' })).error,
+  ).toContain('index.html is the home page')
+  expect(
+    await gateway.call('delete_file', { path: 'work/index.html' }),
+  ).toEqual({ ok: true })
+  expect(
+    (await gateway.call('open_page', { path: 'work/index.html' })).error,
+  ).toBe('There is no page work/index.html.')
+  expect(
+    (await gateway.call('write_file', { path: '../secret.html', content: '' }))
+      .error,
+  ).toContain('Invalid write_file arguments')
+
+  // The preview server itself, as the sandbox runs it.
+  const { url } = await (
+    await page.request.post(`/v2/api/designs/${id}/preview`, {
+      headers: { Origin: new URL(page.url()).origin },
+    })
+  ).json()
+  const home = await page.request.get(url)
+  expect(await home.text()).toContain(
+    '<script src="/__margin/bridge.js" data-margin-file="index.html"></script>',
+  )
+  const css = await page.request.get(`${url}/styles.css`)
+  expect(css.headers()['content-type']).toContain('text/css')
+  const missing = await page.request.get(`${url}/work/`)
+  expect(missing.status()).toBe(404)
+  expect(await missing.text()).toContain("This page doesn't exist yet.")
 })

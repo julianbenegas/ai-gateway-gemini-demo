@@ -1,6 +1,7 @@
 'use client'
 
 import type { ThinkingLevel } from '@/lib/models'
+import { LoaderCircle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { download } from '@/lib/download'
@@ -11,7 +12,7 @@ import { Notice } from '@/ui/notice'
 import { preferenceCookie } from '@/lib/preferences'
 import { useSidebarWidth } from '@/ui/sidebar-resizer'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
-import { sitePreview } from '../_lib/preview'
+import { HOME, pageUrl, type SiteFiles } from '../_lib/files'
 import { agentApi, studioApi } from '../_lib/rpc'
 import {
   siteTools,
@@ -19,6 +20,7 @@ import {
   type StudioContext,
 } from '../_lib/tools'
 import { useVoiceAgent } from '../_lib/use-voice-agent'
+import { zip } from '../_lib/zip'
 import { DesignList } from './design-list'
 import { NewDesign } from './new-design'
 import { NotesPanel } from './notes-panel'
@@ -29,6 +31,7 @@ import type {
   AnnotationPosition,
   Design,
   ElementTarget,
+  PreviewPage,
   SiteAnnotation,
   SiteDocument,
 } from '../_lib/types'
@@ -45,8 +48,14 @@ const configuration = {
   turnDetection: { type: 'server-vad' },
 } satisfies Experimental_RealtimeSessionConfig
 
-/** A new design's page, before the agent writes anything. */
-const isEmptyPage = (html: string) => /<body[^>]*>\s*<\/body>/i.test(html)
+/** A new design, before the agent writes anything. */
+const isEmptyDesign = (files: SiteFiles) =>
+  Object.keys(files).length === 1 &&
+  /<body[^>]*>\s*<\/body>/i.test(files[HOME] ?? '')
+
+// A page that loads without the bridge answering in time has left the site,
+// or its sandbox has stopped.
+const CONNECT_TIMEOUT = 4000
 
 type PendingQuery = {
   resolve: (value: unknown) => void
@@ -80,15 +89,21 @@ export function Studio({
     initial: initialWidth,
   })
   const [error, setError] = useState<string | null>(null)
-  // A passing note about the preview, like a link it can't follow.
+  // A passing note about the preview, like a page that left the site.
   const [hint, setHint] = useState<string | null>(null)
   useEffect(() => {
     if (!hint) return
     const timer = setTimeout(() => setHint(null), 4000)
     return () => clearTimeout(timer)
   }, [hint])
-  // Bumped to remount the preview when its page navigated away.
-  const [reloads, setReloads] = useState(0)
+  // The design's preview server, from its sandbox; see _server/preview.ts.
+  const [preview, setPreview] = useState<
+    { url: string } | { error: string } | null
+  >(null)
+  // A new iframe per load: changing an iframe's src navigates it, and every
+  // navigation adds browser history.
+  const [frame, setFrame] = useState({ key: 0, path: '/' })
+  const [page, setPage] = useState<PreviewPage | null>(null)
   const [mode, setMode] = useState<StudioMode>('browse')
   const [selection, setSelection] = useState<ElementTarget | null>(null)
   const [positions, setPositions] = useState<AnnotationPosition[]>([])
@@ -110,12 +125,14 @@ export function Studio({
   )
 
   // Refs let async work read what is current without stale closures.
-  const frame = useRef<HTMLIFrameElement>(null)
   const port = useRef<MessagePort | null>(null)
-  const snapshot = useRef({ site, mode, selection, annotations })
-  snapshot.current = { site, mode, selection, annotations }
+  const snapshot = useRef({ site, page, mode, selection, annotations })
+  snapshot.current = { site, page, mode, selection, annotations }
   const mutations = useRef<Promise<unknown>>(Promise.resolve())
   const queries = useRef(new Map<string, PendingQuery>())
+  const connectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  // Loads in a row that never connected, to stop retrying at some point.
+  const failedLoads = useRef(0)
 
   const showSite = (next: SiteDocument) => {
     snapshot.current.site = next
@@ -129,6 +146,45 @@ export function Studio({
     mutations.current = next
     return next
   }, [])
+
+  const rejectQueries = useCallback((message: string) => {
+    for (const query of queries.current.values()) {
+      clearTimeout(query.timer)
+      query.reject(new Error(message))
+    }
+    queries.current.clear()
+  }, [])
+
+  /** Loads a page of the site in a fresh preview frame. */
+  const showPage = useCallback(
+    (path: string) => {
+      port.current?.close()
+      port.current = null
+      clearTimeout(connectTimer.current)
+      rejectQueries('The preview is loading a page. Try again.')
+      setFrame(({ key }) => ({ key: key + 1, path }))
+    },
+    [rejectQueries],
+  )
+
+  /** Copies the design's files to its preview, then reloads the page. */
+  const updatePreview = useCallback(async () => {
+    try {
+      const { url } = await studioApi.showPreview({
+        id: snapshot.current.site!.id,
+      })
+      setPreview({ url })
+      showPage(snapshot.current.page?.path ?? '/')
+    } catch (error) {
+      setPreview({
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }, [showPage])
+  const siteId = site?.id
+  useEffect(() => {
+    if (siteId) void mutate(updatePreview)
+  }, [siteId, mutate, updatePreview])
 
   const saveDrawing = useCallback(
     async (annotation: SiteAnnotation) => {
@@ -198,9 +254,11 @@ export function Studio({
 
   const agentEdit = useCallback(
     ({
+      path,
       signal,
       send,
     }: {
+      path: string
       signal: AbortSignal
       send: (
         grant: string,
@@ -210,36 +268,75 @@ export function Studio({
         if (signal.aborted || !grant.current)
           return { error: 'The voice session has ended.' }
         setSaving(true)
+        let result
         try {
-          const { site, matches, missed } = await send(grant.current)
-          showSite(site)
-          return { ok: true, matches, ...(missed && { html: site.html }) }
+          result = await send(grant.current)
+          showSite(result.site)
         } finally {
           setSaving(false)
         }
+        await updatePreview()
+        const { site, matches, missed } = result
+        return {
+          ok: true,
+          ...(matches && { matches }),
+          ...(missed && { content: site.files[path] }),
+        }
       }),
-    [mutate],
+    [mutate, updatePreview],
   )
+
+  /** Waits for edits in flight, so tools read what the agent last wrote. */
+  const currentFiles = async () => {
+    await mutations.current.catch(() => {})
+    return snapshot.current.site?.files ?? {}
+  }
 
   const studio = useMemo<StudioContext>(
     () => ({
       readSelection,
-      readHtml: async () => {
-        await mutations.current.catch(() => {})
-        return snapshot.current.site?.html ?? ''
+      listFiles: async () => ({
+        files: Object.entries(await currentFiles()).map(([path, content]) => ({
+          path,
+          bytes: new Blob([content]).size,
+        })),
+        page: snapshot.current.page,
+      }),
+      readFile: async ({ path }) => {
+        const files = await currentFiles()
+        if (!Object.hasOwn(files, path)) throw new Error(`There is no ${path}.`)
+        return { path, content: files[path] }
       },
-      editHtml: ({ input, callId, signal }) =>
+      editFile: ({ input, callId, signal }) =>
         agentEdit({
+          path: input.path,
           signal,
-          send: (grant) => agentApi.editHtml({ grant, input, callId, signal }),
+          send: (grant) => agentApi.editFile({ grant, input, callId, signal }),
         }),
-      writeHtml: ({ input, callId, signal }) =>
+      writeFile: ({ input, callId, signal }) =>
         agentEdit({
+          path: input.path,
           signal,
-          send: (grant) => agentApi.writeHtml({ grant, input, callId, signal }),
+          send: (grant) => agentApi.writeFile({ grant, input, callId, signal }),
         }),
+      deleteFile: ({ input, callId, signal }) =>
+        agentEdit({
+          path: input.path,
+          signal,
+          send: (grant) =>
+            agentApi.deleteFile({ grant, input, callId, signal }),
+        }),
+      openPage: async ({ path }) => {
+        if (
+          !path.endsWith('.html') ||
+          !Object.hasOwn(await currentFiles(), path)
+        )
+          throw new Error(`There is no page ${path}.`)
+        showPage(pageUrl(path))
+        return { ok: true, url: pageUrl(path) }
+      },
     }),
-    [readSelection, agentEdit],
+    [readSelection, agentEdit, showPage],
   )
 
   const voice = useVoiceAgent({
@@ -259,6 +356,7 @@ export function Studio({
   const undoAgentEdit = () =>
     mutate(async () => {
       showSite(await studioApi.undoAgentEdit({ id: snapshot.current.site!.id }))
+      await updatePreview()
     }).catch(fail)
 
   // A copy starts a fresh voice session, for when a conversation goes astray.
@@ -293,41 +391,51 @@ export function Studio({
     }
   }
 
-  // The preview document is built in the browser, where DOMParser and the
-  // origin exist; the server renders the frame empty.
-  const [origin, setOrigin] = useState<string | null>(null)
-  useEffect(() => setOrigin(window.location.origin), [])
-  const preview = useMemo(
-    () => (site && origin ? sitePreview({ html: site.html, origin }) : ''),
-    [site?.html, origin],
-  )
-
+  // Notes are numbered across the site; the page only shows its own.
   const sendState = useCallback(() => {
     const current = snapshot.current
     port.current?.postMessage({
       type: 'state',
       mode: current.mode,
       selectedId: current.selection?.id ?? null,
-      annotations: current.annotations,
+      annotations: current.annotations
+        .map((note, index) => ({ ...note, number: index + 1 }))
+        .filter((note) => note.page === current.page?.file),
     })
   }, [])
-  useEffect(sendState, [mode, selection?.id, annotations, sendState])
+  useEffect(sendState, [mode, selection?.id, annotations, page, sendState])
 
-  const rejectQueries = (message: string) => {
-    for (const query of queries.current.values()) {
-      clearTimeout(query.timer)
-      query.reject(new Error(message))
-    }
-    queries.current.clear()
-  }
-
-  const connectPreview = () => {
+  const connectPreview = (frame: HTMLIFrameElement) => {
+    if (!preview || !('url' in preview)) return
     port.current?.close()
     rejectQueries('The preview updated. Read the selection again if needed.')
     const channel = new MessageChannel()
     port.current = channel.port1
+    clearTimeout(connectTimer.current)
+    connectTimer.current = setTimeout(() => {
+      port.current?.close()
+      port.current = null
+      if (++failedLoads.current > 2) {
+        setPreview({ error: 'The preview is not responding.' })
+        return
+      }
+      setHint('The page left the website, so the preview reloaded.')
+      void mutate(updatePreview)
+    }, CONNECT_TIMEOUT)
     channel.port1.onmessage = ({ data }) => {
-      if (data.type === 'ready') sendState()
+      if (data.type === 'ready') {
+        clearTimeout(connectTimer.current)
+        failedLoads.current = 0
+        // Element IDs are only unique within a page.
+        if (data.page.file !== snapshot.current.page?.file) {
+          snapshot.current.selection = null
+          setSelection(null)
+          setNoteOpen(false)
+        }
+        snapshot.current.page = data.page
+        setPage(data.page)
+        sendState()
+      }
       if (data.type === 'selection') {
         setSelection(data.selection)
         setNoteOpen(false)
@@ -346,40 +454,53 @@ export function Studio({
         if (url && ['http:', 'https:', 'mailto:'].includes(url.protocol))
           window.open(url, '_blank', 'noopener,noreferrer')
       }
-      if (data.type === 'page-link')
-        setHint(
-          `This design is a single page, so the link to ${String(data.href).slice(0, 60)} doesn't open.`,
-        )
       if (data.type === 'context') {
         const query = queries.current.get(data.requestId)
         if (query) {
           clearTimeout(query.timer)
           queries.current.delete(data.requestId)
+          const { annotations, page } = snapshot.current
+          const elsewhere = annotations.filter(
+            (note) => note.page !== page?.file,
+          )
           query.resolve({
+            page,
             selection: data.selection,
             annotations: data.annotations,
+            ...(elsewhere.length && {
+              otherPages: elsewhere.map((note) => ({
+                id: note.id,
+                page: note.page,
+                comment: note.comment,
+                target: { tag: note.target.tag, text: note.target.text },
+              })),
+            }),
             viewport: data.viewport,
           })
         }
         setSelection(data.selection)
       }
     }
-    frame.current?.contentWindow?.postMessage({ type: 'margin:v2:init' }, '*', [
-      channel.port2,
-    ])
+    frame.contentWindow?.postMessage(
+      { type: 'margin:v2:init' },
+      new URL(preview.url).origin,
+      [channel.port2],
+    )
   }
   useEffect(
     () => () => {
       port.current?.close()
+      clearTimeout(connectTimer.current)
       rejectQueries('The preview was closed.')
     },
-    [],
+    [rejectQueries],
   )
 
   const addNote = async (comment: string) => {
     if (!selection) return false
     const annotation: SiteAnnotation = {
       id: crypto.randomUUID(),
+      page: page?.file ?? HOME,
       target: selection,
       comment,
     }
@@ -418,9 +539,14 @@ export function Studio({
     }
   }
 
-  const downloadHtml = () => {
+  const designName = designs.find((design) => design.id === site?.id)?.name
+  const downloadSite = () => {
     if (site)
-      download({ name: 'index.html', content: site.html, type: 'text/html' })
+      download({
+        name: `${designName ?? 'website'}.zip`,
+        content: zip(site.files),
+        type: 'application/zip',
+      })
   }
 
   const notice =
@@ -429,6 +555,7 @@ export function Studio({
   const lastDrawing = site?.annotations.findLast(
     (annotation) => annotation.drawing,
   )
+  const overlay = 'absolute inset-0 grid place-items-center bg-background'
 
   return (
     <main
@@ -440,7 +567,7 @@ export function Studio({
       className="grid h-dvh grid-cols-[var(--sidebar)_1fr] grid-rows-[40px_1fr] max-sm:grid-cols-[0px_1fr]"
     >
       <StudioHeader
-        designName={designs.find((design) => design.id === site?.id)?.name}
+        designName={designName}
         status={
           saving || savingDrawings
             ? 'saving'
@@ -455,7 +582,7 @@ export function Studio({
         onUndoAgentEdit={() => void undoAgentEdit()}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         onViewSource={() => setSourceOpen(true)}
-        onDownload={downloadHtml}
+        onDownload={downloadSite}
       />
       {sidebarOpen && (
         <DesignList
@@ -471,39 +598,51 @@ export function Studio({
       <div className="relative isolate col-start-2 row-start-2 min-h-0 overflow-hidden">
         {site ? (
           <>
-            {preview && (
-              // A new iframe per document: changing an iframe's srcDoc
-              // navigates it, and every navigation adds browser history.
+            {preview && 'url' in preview && (
               <iframe
-                key={`${reloads}:${preview}`}
-                ref={frame}
+                key={frame.key}
                 title="Website preview"
-                sandbox="allow-scripts"
+                sandbox="allow-scripts allow-same-origin"
                 referrerPolicy="no-referrer"
-                srcDoc={preview}
-                onLoad={(event) => {
-                  // A second load means the page navigated away from the
-                  // design, as a script can; show the design again.
-                  const loaded = event.currentTarget.dataset
-                  if (loaded.design) {
-                    rejectQueries('The preview reloaded. Try again.')
-                    setHint('The page navigated away, so the preview reloaded.')
-                    setReloads((count) => count + 1)
-                    return
-                  }
-                  loaded.design = 'true'
-                  connectPreview()
-                }}
+                src={new URL(frame.path, preview.url).href}
+                onLoad={(event) => connectPreview(event.currentTarget)}
                 className="absolute inset-0 size-full bg-white scheme-light"
               />
             )}
             {/* The page stays mounted underneath so the agent's tools work. */}
-            {isEmptyPage(site.html) && (
-              <div className="absolute inset-0 grid place-items-center bg-background">
+            {isEmptyDesign(site.files) ? (
+              <div className={overlay}>
                 <EmptyState title="Empty design">
                   Press Talk and describe a website.
                 </EmptyState>
               </div>
+            ) : !preview ? (
+              <div className={overlay}>
+                <p className="flex items-center gap-2 text-faint">
+                  <LoaderCircle size={14} className="animate-spin" />
+                  Starting the preview
+                </p>
+              </div>
+            ) : (
+              'error' in preview && (
+                <div className={overlay}>
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    <p role="alert" className="max-w-80 text-danger">
+                      {preview.error}
+                    </p>
+                    <Button
+                      variant="accent"
+                      onClick={() => {
+                        failedLoads.current = 0
+                        setPreview(null)
+                        void mutate(updatePreview)
+                      }}
+                    >
+                      Try again
+                    </Button>
+                  </div>
+                </div>
+              )
             )}
           </>
         ) : (
@@ -587,6 +726,7 @@ export function Studio({
             annotations={annotations}
             positions={positions}
             pendingIds={draftDrawings.map((draft) => draft.id)}
+            page={page?.file ?? null}
             onDelete={(id) => void deleteNote(id)}
             onClose={() => setNotesOpen(false)}
           />
@@ -604,9 +744,10 @@ export function Studio({
       )}
       {sourceOpen && site && (
         <SourceDialog
-          html={site.html}
+          files={site.files}
+          initialPath={page?.file ?? HOME}
           onClose={() => setSourceOpen(false)}
-          onDownload={downloadHtml}
+          onDownload={downloadSite}
         />
       )}
     </main>

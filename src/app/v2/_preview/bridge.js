@@ -1,4 +1,9 @@
+// The studio's side of every page in a design's preview, added by the preview
+// server: it draws selections, notes, and drawings over the page, and answers
+// the studio over a MessagePort.
 ;(() => {
+  // The page's file, like about.html; empty on a page that doesn't exist.
+  const file = document.currentScript?.dataset.marginFile || null
   let port
   let mode = 'browse'
   let selectedId = null
@@ -90,9 +95,10 @@
         rect.left < innerWidth
       if (visible) {
         const pin = document.createElement('button')
-        pin.textContent = String(index + 1)
+        const number = note.number ?? index + 1
+        pin.textContent = String(number)
         pin.title = note.comment || 'Freehand drawing'
-        pin.setAttribute('aria-label', `Annotation ${index + 1}`)
+        pin.setAttribute('aria-label', `Annotation ${number}`)
         pin.style.cssText = `position:fixed;left:${Math.max(4, Math.min(innerWidth - 28, rect.right - 12))}px;top:${Math.max(4, rect.top - 12)}px;width:24px;height:24px;border:2px solid white;border-radius:0;background:#040404;color:#fafafa;font:600 11px ui-monospace,monospace;pointer-events:auto;cursor:pointer;box-shadow:0 2px 8px #0004`
         pin.onclick = () =>
           port?.postMessage({ type: 'open-note', id: note.id })
@@ -141,7 +147,8 @@
     }
     port.onmessage = ({ data }) => {
       if (data.type === 'state') {
-        mode = data.mode
+        // A missing page has nothing to annotate.
+        mode = file ? data.mode : 'browse'
         document.documentElement.setAttribute('data-margin-mode', mode)
         if (mode !== 'draw') stroke = null
         selectedId = data.selectedId
@@ -194,7 +201,10 @@
         })
       }
     }
-    port.postMessage({ type: 'ready' })
+    port.postMessage({
+      type: 'ready',
+      page: { file, path: location.pathname },
+    })
   })
 
   document.addEventListener(
@@ -263,31 +273,27 @@
     },
     true,
   )
-  // In a srcdoc frame, links resolve against the studio's URL, so following
-  // one would leave the design. Anchors scroll within the page instead, links
-  // to other sites open in a new tab, and other pages of this site don't
-  // exist. This runs last, so the site's own click handlers go first.
+  // Links to other pages of the site open here, as on the web. The preview
+  // can't open windows, so links to other sites open in a new tab from the
+  // studio. This runs last, so the site's own click handlers go first.
   window.addEventListener('click', (event) => {
     if (mode !== 'browse' || event.defaultPrevented) return
     const link =
       event.target instanceof Element && event.target.closest('a[href]')
-    if (!link || link.closest('[data-margin-ui]')) return
-    const href = link.getAttribute('href').trim()
-    if (/^javascript:/i.test(href)) return
-    event.preventDefault()
-    if (href.startsWith('#')) {
-      const id = decodeURIComponent(href.slice(1))
-      const target =
-        id && (document.getElementById(id) || document.getElementsByName(id)[0])
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      else if (!id || id === 'top') scrollTo({ top: 0, behavior: 'smooth' })
+    if (!link || link.closest('[data-margin-ui]') || !URL.canParse(link.href))
+      return
+    const url = new URL(link.href)
+    if (url.protocol === 'javascript:') return
+    if (url.origin === location.origin) {
+      if (link.target && link.target !== '_self') {
+        event.preventDefault()
+        location.assign(url.href)
+      }
       return
     }
-    // Only absolute URLs name another site; anything else is a page here.
-    const url = URL.canParse(href) ? new URL(href) : null
-    if (url && ['http:', 'https:', 'mailto:'].includes(url.protocol))
+    event.preventDefault()
+    if (['http:', 'https:', 'mailto:'].includes(url.protocol))
       port?.postMessage({ type: 'open-link', url: url.href })
-    else port?.postMessage({ type: 'page-link', href })
   })
   const addPoint = (event) => {
     const element = document
@@ -347,6 +353,7 @@
       )
       const annotation = {
         id: crypto.randomUUID(),
+        page: file,
         target,
         comment: '',
         drawing: {

@@ -6,12 +6,15 @@ export function NotesPanel({
   annotations,
   positions,
   pendingIds,
+  page,
   onDelete,
   onClose,
 }: {
   annotations: SiteAnnotation[]
   positions: AnnotationPosition[]
   pendingIds: string[]
+  /** The file the preview shows, whose notes are on screen. */
+  page: string | null
   onDelete: (id: string) => void
   onClose: () => void
 }) {
@@ -51,6 +54,7 @@ export function NotesPanel({
           </p>
           <small className="block truncate text-xs text-faint">
             {annotation.target.text.trim() || annotation.target.selector}
+            {annotation.page !== page && ` · On ${annotation.page}`}
             {positions.find((position) => position.id === annotation.id)
               ?.attached === false && ' · Element changed'}
           </small>

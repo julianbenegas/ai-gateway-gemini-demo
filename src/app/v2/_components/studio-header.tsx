@@ -69,7 +69,7 @@ export function StudioHeader({
           <CodeXml size={16} />
         </IconButton>
         <IconButton
-          label="Download HTML"
+          label="Download website"
           onClick={onDownload}
           disabled={disabled}
         >

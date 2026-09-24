@@ -48,3 +48,12 @@ export const BLANK_DESIGN_HTML = prepareHtml({
   html: '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Untitled</title></head><body></body></html>',
   seed: true,
 })
+
+/** Keeps a page's elements addressable; other files are stored as they are. */
+export const prepareFile = ({
+  path,
+  content,
+}: {
+  path: string
+  content: string
+}) => (path.endsWith('.html') ? prepareHtml({ html: content }) : content)

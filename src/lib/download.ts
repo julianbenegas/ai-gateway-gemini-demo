@@ -4,7 +4,7 @@ export function download({
   type,
 }: {
   name: string
-  content: string
+  content: string | Blob
   type: string
 }) {
   const url = URL.createObjectURL(new Blob([content], { type }))

@@ -6,17 +6,20 @@ import { thinkingLevels } from '@/lib/models'
 import { realtimeToken } from '@/lib/realtime'
 import {
   annotationSchema,
-  editHtmlInput,
+  deleteFileInput,
+  editFileInput,
   type ServerTool,
-  writeHtmlInput,
+  writeFileInput,
 } from '../_lib/tools'
 import { owner, requireOwner } from './auth'
 import { authorizeAgent, issueGrant, revokeGrant } from './grants'
+import { deletePreview, showPreview } from './preview'
 import {
   createDesign,
   deleteDesign,
   duplicateDesign,
   editDesign,
+  type FileEdit,
   listDesigns,
   readDesign,
   removeAnnotation,
@@ -39,7 +42,7 @@ async function agentEdit({
 }: {
   tool: ServerTool
   headers: z.infer<typeof agentHeaders>
-  edit: Parameters<typeof editDesign>[0]['edit']
+  edit: FileEdit
 }) {
   const grant = await authorizeAgent({
     authorization: headers.authorization,
@@ -76,14 +79,34 @@ export const api = new Elysia({ prefix: '/v2/api' })
   )
   .delete(
     '/designs/:id',
-    async ({ params }) =>
-      deleteDesign({ owner: await requireOwner(), id: params.id }),
+    async ({ params }) => {
+      const deleted = await deleteDesign({
+        owner: await requireOwner(),
+        id: params.id,
+      })
+      await deletePreview({ designId: params.id })
+      return deleted
+    },
     { params: design },
   )
   .post(
     '/designs/:id/duplicate',
     async ({ params }) =>
       duplicateDesign({ owner: await requireOwner(), id: params.id }),
+    { params: design },
+  )
+  // Brings the design's preview up to date, booting its sandbox if needed.
+  .post(
+    '/designs/:id/preview',
+    async ({ params }) => {
+      const site = await readDesign({
+        owner: await requireOwner(),
+        id: params.id,
+      })
+      return {
+        url: await showPreview({ designId: site.id, files: site.files }),
+      }
+    },
     { params: design },
   )
   .post(
@@ -134,16 +157,26 @@ export const api = new Elysia({ prefix: '/v2/api' })
   )
   // The agent, identified by its session grant.
   .post(
-    '/agent/edit_html',
+    '/agent/edit_file',
     async ({ headers, body }) =>
-      agentEdit({ tool: 'edit_html', headers, edit: body }),
-    { headers: agentHeaders, body: editHtmlInput },
+      agentEdit({ tool: 'edit_file', headers, edit: body }),
+    { headers: agentHeaders, body: editFileInput },
   )
   .post(
-    '/agent/write_html',
+    '/agent/write_file',
     async ({ headers, body }) =>
-      agentEdit({ tool: 'write_html', headers, edit: body }),
-    { headers: agentHeaders, body: writeHtmlInput },
+      agentEdit({ tool: 'write_file', headers, edit: body }),
+    { headers: agentHeaders, body: writeFileInput },
+  )
+  .post(
+    '/agent/delete_file',
+    async ({ headers, body }) =>
+      agentEdit({
+        tool: 'delete_file',
+        headers,
+        edit: { path: body.path, delete: true },
+      }),
+    { headers: agentHeaders, body: deleteFileInput },
   )
   .delete(
     '/agent/grant',
