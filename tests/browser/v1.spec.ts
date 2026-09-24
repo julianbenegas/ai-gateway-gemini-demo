@@ -931,9 +931,10 @@ test('the transcript shows both sides of the conversation and tool calls', async
 }) => {
   const gateway = await mockGateway(page)
   await openWorkspace(page)
-  await expect(
-    page.getByRole('button', { name: 'Show transcript' }),
-  ).toHaveCount(0)
+  await page.getByRole('button', { name: 'Show transcript' }).click()
+  const transcript = page.getByRole('region', { name: 'Transcript' })
+  await expect(transcript).toContainText('Nothing said yet.')
+  await page.getByRole('button', { name: 'Show transcript' }).click()
   await connectVoice(page)
   gateway.send({
     type: 'input-transcription-completed',
@@ -962,7 +963,6 @@ test('the transcript shows both sides of the conversation and tool calls', async
   })
   await gateway.call('read_board', {}, 'transcript-call')
   await page.getByRole('button', { name: 'Show transcript' }).click()
-  const transcript = page.getByRole('region', { name: 'Transcript' })
   await expect(transcript.locator('[data-role="user"]')).toHaveText(
     'Make the heading say Great.',
   )
@@ -970,6 +970,11 @@ test('the transcript shows both sides of the conversation and tool calls', async
     'On it, changing it now.',
   )
   await expect(transcript).toContainText('Looking at your board')
+  await expect(transcript.locator('[data-session-divider]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'End voice session' }).click()
+  await connectVoice(page)
+  await expect(transcript.locator('[data-session-divider]')).toHaveCount(1)
+  await expect(transcript.locator('[data-role="user"]')).toHaveCount(1)
   await page.getByRole('button', { name: 'Close transcript' }).click()
   await expect(transcript).toHaveCount(0)
 })
@@ -1062,4 +1067,26 @@ test('extended thinking is on by default, fixed during a session, and remembered
   await connectVoice(page)
   expect(tokens.at(-1)).toContain('thinking=off')
   expect(session().providerOptions).toBeUndefined()
+})
+
+test('duplicating a board from its context menu copies its shapes', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page
+    .getByRole('button', { name: 'First ideas', exact: true })
+    .click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'First ideas Copy', exact: true }),
+  ).toHaveAttribute('aria-current', 'page')
+  await expect(page.locator('[data-website] iframe')).toHaveCount(1)
+  await expect
+    .poll(
+      async () =>
+        (await savedRecords(page)).filter(
+          (record) => record.typeName === 'shape' && record.type === 'website',
+        ).length,
+    )
+    .toBe(2)
 })

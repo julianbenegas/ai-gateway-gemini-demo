@@ -98,6 +98,28 @@ export async function renameDesign({
   return renamed
 }
 
+/** Copies a design's page and notes into a new design; history stays behind. */
+export async function duplicateDesign(ref: DesignRef) {
+  const [site, designs] = await Promise.all([
+    readDesign(ref),
+    redis().hmget<Record<string, Design>>(designsKey(ref.owner), ref.id),
+  ])
+  const copy: Design = {
+    id: randomUUID(),
+    name: `${designs?.[ref.id]?.name ?? 'Design'} copy`,
+    createdAt: Date.now(),
+  }
+  await redis()
+    .multi()
+    .hset(designKey({ owner: ref.owner, id: copy.id }), {
+      html: site.html,
+      annotations: site.annotations,
+    })
+    .hset(designsKey(ref.owner), { [copy.id]: copy })
+    .exec()
+  return copy
+}
+
 /** Applies an agent edit, keeping the previous HTML for undo. */
 export async function editDesign({
   ref,

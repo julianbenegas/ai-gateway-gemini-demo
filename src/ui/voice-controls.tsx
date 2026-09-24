@@ -28,7 +28,7 @@ export function VoiceControls({
 }: Parameters<typeof SessionControls>[0] & {
   /** A toggle for the model's extended thinking, fixed while connected. */
   thinking?: { enabled: boolean; locked: boolean; toggle: () => void }
-  /** Shows a transcript toggle; pass it once there is something to show. */
+  /** Shows a transcript toggle. */
   transcript?: { open: boolean; onToggle: () => void }
 }) {
   return (

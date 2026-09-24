@@ -113,6 +113,15 @@ export function Workspace({
               onRename={(name) =>
                 editor?.updatePage({ id: board.id as TLPageId, name })
               }
+              actions={[
+                {
+                  label: 'Duplicate',
+                  onSelect: () => {
+                    editor?.markHistoryStoppingPoint('duplicate board')
+                    editor?.duplicatePage(board.id as TLPageId)
+                  },
+                },
+              ]}
             />
           ))}
         </nav>

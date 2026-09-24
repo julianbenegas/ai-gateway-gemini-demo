@@ -1,14 +1,16 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Asterisk } from 'lucide-react'
 import { cx } from './cx'
+import { Menu, type MenuItem } from './menu'
 
 /** A sidebar entry. Clicking the current entry renames it in place. */
 /**
  * A sidebar entry. Other entries open with `href` (a link) or `onOpen`;
- * clicking the current entry renames it in place.
+ * clicking the current entry renames it in place. Right-click opens a menu
+ * with Rename and any `actions`.
  */
 export function SidebarItem({
   name,
@@ -16,15 +18,36 @@ export function SidebarItem({
   href,
   onOpen,
   onRename,
+  actions = [],
 }: {
   name: string
   current: boolean
   href?: string
   onOpen?: () => void
   onRename: (name: string) => void
+  actions?: MenuItem[]
 }) {
   const [editing, setEditing] = useState(false)
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
+  const closeMenu = useCallback(() => setMenuAt(null), [])
   const cancelled = useRef(false)
+  const rename = () => {
+    cancelled.current = false
+    setEditing(true)
+  }
+  const menuProps = {
+    onContextMenu: (event: React.MouseEvent) => {
+      event.preventDefault()
+      setMenuAt({ x: event.clientX, y: event.clientY })
+    },
+  }
+  const menu = menuAt && (
+    <Menu
+      at={menuAt}
+      items={[{ label: 'Rename', onSelect: rename }, ...actions]}
+      onClose={closeMenu}
+    />
+  )
   const icon = (
     <Asterisk
       size={14}
@@ -65,23 +88,26 @@ export function SidebarItem({
   )
   if (href && !current)
     return (
-      <Link href={href} className={className}>
-        {icon}
-        {label}
-      </Link>
+      <>
+        <Link href={href} className={className} {...menuProps}>
+          {icon}
+          {label}
+        </Link>
+        {menu}
+      </>
     )
   return (
-    <button
-      aria-current={current ? 'page' : undefined}
-      onClick={() => {
-        if (!current) return onOpen?.()
-        cancelled.current = false
-        setEditing(true)
-      }}
-      className={className}
-    >
-      {icon}
-      {label}
-    </button>
+    <>
+      <button
+        aria-current={current ? 'page' : undefined}
+        onClick={() => (current ? rename() : onOpen?.())}
+        className={className}
+        {...menuProps}
+      >
+        {icon}
+        {label}
+      </button>
+      {menu}
+    </>
   )
 }

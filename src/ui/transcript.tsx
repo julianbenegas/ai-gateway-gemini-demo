@@ -6,14 +6,20 @@ import type { UIMessage } from 'ai'
 import { IconButton } from './button'
 import { cx } from './cx'
 
-/** A voice session's messages as a small chat: speech and tool calls. */
+/**
+ * Voice messages as a small chat: speech and tool calls. The model forgets
+ * everything when a session ends, so a divider marks where each one starts.
+ */
 export function Transcript({
   messages,
+  sessionStarts = [],
   labels,
   onClose,
   className,
 }: {
   messages: UIMessage[]
+  /** Indexes of the messages that opened a new session. */
+  sessionStarts?: number[]
   /** Tool names to the labels shown for them. */
   labels: Record<string, string>
   onClose: () => void
@@ -41,8 +47,17 @@ export function Transcript({
         </IconButton>
       </header>
       <ol className="flex min-h-0 flex-col gap-2 overflow-auto p-3">
-        {messages.flatMap((message) =>
-          message.parts.map((part, index) => {
+        {!messages.length && <li className="text-faint">Nothing said yet.</li>}
+        {messages.flatMap((message, position) => [
+          sessionStarts.includes(position) && (
+            <li
+              key={`session:${position}`}
+              data-session-divider
+              aria-label="New session"
+              className="my-1 dashed-line shrink-0"
+            />
+          ),
+          ...message.parts.map((part, index) => {
             const key = `${message.id}:${index}`
             if (part.type === 'text' && part.text.trim())
               return (
@@ -82,6 +97,14 @@ export function Transcript({
               )
             return null
           }),
+        ])}
+        {/* A session that started after the last message, with nothing new yet. */}
+        {sessionStarts.includes(messages.length) && (
+          <li
+            data-session-divider
+            aria-label="New session"
+            className="my-1 dashed-line shrink-0"
+          />
         )}
         <li ref={end} aria-hidden />
       </ol>

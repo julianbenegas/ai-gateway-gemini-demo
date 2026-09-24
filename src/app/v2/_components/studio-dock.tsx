@@ -44,6 +44,7 @@ export function StudioDock({
     mute: () => void
     end: () => void
     messages: UIMessage[]
+    sessionStarts: number[]
     thinking: { enabled: boolean; locked: boolean; toggle: () => void }
   }
   transcriptOpen: boolean
@@ -84,9 +85,10 @@ export function StudioDock({
           </IconButton>
         </div>
       )}
-      {transcriptOpen && !!voice.messages.length && (
+      {transcriptOpen && (
         <Transcript
           messages={voice.messages}
+          sessionStarts={voice.sessionStarts}
           labels={labels}
           onClose={onToggleTranscript}
         />
@@ -111,11 +113,7 @@ export function StudioDock({
           onStart={onStartVoice}
           disabled={disabled}
           thinking={voice.thinking}
-          transcript={
-            voice.messages.length
-              ? { open: transcriptOpen, onToggle: onToggleTranscript }
-              : undefined
-          }
+          transcript={{ open: transcriptOpen, onToggle: onToggleTranscript }}
         />
         <span className="w-1" />
         <IconButton

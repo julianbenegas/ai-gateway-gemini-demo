@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import { thinkingSessionOptions } from '@/lib/models'
 import { writePreference } from '@/lib/preferences'
@@ -52,6 +52,22 @@ export function useVoiceAgent<Context>({
   })
   const response = useResponses({ session })
 
+  // Where each session began in the transcript, since the model forgets.
+  const messages = session.realtime.messages
+  const [sessionStarts, setSessionStarts] = useState<number[]>([])
+  const count = messages.length
+  // `generation` changes as each session starts; mark the messages before it.
+  useEffect(() => {
+    if (count)
+      setSessionStarts((starts) =>
+        starts.at(-1) === count ? starts : [...starts, count],
+      )
+  }, [session.generation])
+  useEffect(() => {
+    // A new realtime store, as after switching models, starts empty.
+    if (!count) setSessionStarts([])
+  }, [count])
+
   const notice: { tone: NoticeTone; message: string } | null = session.error
     ? { tone: 'error', message: session.error }
     : activity && { tone: activity.state, message: activity.label }
@@ -84,7 +100,8 @@ export function useVoiceAgent<Context>({
     end: session.end,
     mute: session.mute,
     /** The conversation so far: transcripts and tool calls. */
-    messages: session.realtime.messages,
+    messages,
+    sessionStarts,
     notice,
     showError: session.setError,
     dismissNotice: () => {

@@ -68,7 +68,7 @@ Realtime tool calls arrive in the browser over the model's WebSocket, so the too
 
 A session's state is per instance, but the microphone, the speakers, and Gateway's session limit are shared. Create one session per page and pass it down; two instances mean two agents listening to the same microphone.
 
-Gemini transcribes both sides of the conversation (`inputAudioTranscription` and `outputAudioTranscription`). The AI SDK turns the transcripts and tool calls into `messages`, which the transcript toggle next to the voice controls shows as a small chat.
+Gemini transcribes both sides of the conversation (`inputAudioTranscription` and `outputAudioTranscription`). The AI SDK turns the transcripts and tool calls into `messages`, which the transcript toggle next to the voice controls shows as a small chat. The transcript lasts while the page is open, across sessions, but the model forgets everything when a session ends, so a dashed line marks where each new one starts. To start fresh on a copy, right-click a board or design and choose Duplicate.
 
 ## Extended thinking
 

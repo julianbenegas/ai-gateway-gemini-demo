@@ -61,14 +61,10 @@ export function CanvasVoice({
         onMute={voice.mute}
         onEnd={voice.end}
         thinking={voice.thinking}
-        transcript={
-          voice.messages.length
-            ? {
-                open: transcriptOpen,
-                onToggle: () => setTranscriptOpen(!transcriptOpen),
-              }
-            : undefined
-        }
+        transcript={{
+          open: transcriptOpen,
+          onToggle: () => setTranscriptOpen(!transcriptOpen),
+        }}
       />
       <div className="absolute top-11 right-0 z-10 flex flex-col items-end gap-2">
         {voice.notice && (
@@ -76,9 +72,10 @@ export function CanvasVoice({
             {voice.notice.message}
           </Notice>
         )}
-        {transcriptOpen && !!voice.messages.length && (
+        {transcriptOpen && (
           <Transcript
             messages={voice.messages}
+            sessionStarts={voice.sessionStarts}
             labels={labels}
             onClose={() => setTranscriptOpen(false)}
           />

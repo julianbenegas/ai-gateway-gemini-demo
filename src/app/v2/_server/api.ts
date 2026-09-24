@@ -13,6 +13,7 @@ import { owner, requireOwner } from './auth'
 import { authorizeAgent, issueGrant, revokeGrant } from './grants'
 import {
   createDesign,
+  duplicateDesign,
   editDesign,
   listDesigns,
   readDesign,
@@ -70,6 +71,12 @@ export const api = new Elysia({ prefix: '/v2/api' })
       params: design,
       body: z.object({ name: z.string().trim().min(1).max(80) }),
     },
+  )
+  .post(
+    '/designs/:id/duplicate',
+    async ({ params }) =>
+      duplicateDesign({ owner: await requireOwner(), id: params.id }),
+    { params: design },
   )
   .post(
     '/designs/:id/undo',

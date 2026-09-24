@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { download } from '@/lib/download'
 import { Button } from '@/ui/button'
@@ -68,6 +69,7 @@ export function Studio({
   /** Whether voice starts with extended thinking. */
   thinking: boolean
 }) {
+  const router = useRouter()
   const [site, setSite] = useState(initialSite)
   const [designs, setDesigns] = useState(initialDesigns)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -248,6 +250,15 @@ export function Studio({
       showSite(await studioApi.undoAgentEdit({ id: snapshot.current.site!.id }))
     }).catch(fail)
 
+  // A copy starts a fresh voice session, for when a conversation goes astray.
+  const duplicateDesign = async ({ id }: { id: string }) => {
+    try {
+      const copy = await studioApi.duplicateDesign({ id })
+      router.push(`/v2/${copy.id}`)
+    } catch (error) {
+      fail(error)
+    }
+  }
   const renameDesign = async ({ id, name }: { id: string; name: string }) => {
     const previous = designs
     setDesigns(designs.map((d) => (d.id === id ? { ...d, name } : d)))
@@ -420,6 +431,7 @@ export function Studio({
           width={sidebarWidth}
           onResize={setSidebarWidth}
           onRename={renameDesign}
+          onDuplicate={duplicateDesign}
         />
       )}
       <div className="relative isolate col-start-2 row-start-2 min-h-0 overflow-hidden">

@@ -470,3 +470,26 @@ test('agent edits carry the voice session grant and can be undone', async ({
   })
   expect(replay.status()).toBe(401)
 })
+
+test('duplicating a design copies its page into a new design', async ({
+  page,
+}) => {
+  const { id } = await openFixture(page)
+  await page
+    .getByRole('button', { name: 'Design 1', exact: true })
+    .click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).click()
+  await page.waitForURL((url) => !url.pathname.endsWith(id))
+  await expect(
+    page.getByRole('button', { name: 'Design 1 copy', exact: true }),
+  ).toHaveAttribute('aria-current', 'page')
+  await expect(preview(page).getByRole('heading', { level: 1 })).toContainText(
+    'Good spaces.',
+  )
+  await expect(
+    page.getByRole('button', { name: 'Undo agent edit' }),
+  ).toBeDisabled()
+  await expect(
+    page.getByRole('button', { name: 'Talk and annotate', exact: true }),
+  ).toBeVisible()
+})

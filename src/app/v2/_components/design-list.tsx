@@ -10,12 +10,14 @@ export function DesignList({
   width,
   onResize,
   onRename,
+  onDuplicate,
 }: {
   designs: Design[]
   currentId: string | null
   width: number
   onResize: (width: number) => void
   onRename: (design: { id: string; name: string }) => void
+  onDuplicate: (design: { id: string }) => void
 }) {
   return (
     <aside
@@ -31,6 +33,12 @@ export function DesignList({
             current={design.id === currentId}
             href={`/v2/${design.id}`}
             onRename={(name) => onRename({ id: design.id, name })}
+            actions={[
+              {
+                label: 'Duplicate',
+                onSelect: () => onDuplicate({ id: design.id }),
+              },
+            ]}
           />
         ))}
       </nav>
