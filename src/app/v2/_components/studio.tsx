@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { download } from '@/lib/download'
 import { Button } from '@/ui/button'
+import { EmptyState } from '@/ui/empty-state'
 import { Notice } from '@/ui/notice'
 import { preferenceCookie } from '@/lib/preferences'
 import { useSidebarWidth } from '@/ui/sidebar-resizer'
@@ -40,6 +41,9 @@ const configuration = {
   outputAudioTranscription: {},
   turnDetection: { type: 'server-vad' },
 } satisfies Experimental_RealtimeSessionConfig
+
+/** A new design's page, before the agent writes anything. */
+const isEmptyPage = (html: string) => /<body[^>]*>\s*<\/body>/i.test(html)
 
 type PendingQuery = {
   resolve: (value: unknown) => void
@@ -420,21 +424,33 @@ export function Studio({
       )}
       <div className="relative isolate col-start-2 row-start-2 min-h-0 overflow-hidden">
         {site ? (
-          // A new iframe per document: changing an iframe's srcDoc navigates
-          // it, and every navigation would add a browser history entry.
-          <iframe
-            key={preview}
-            ref={frame}
-            title="Website preview"
-            sandbox="allow-scripts"
-            referrerPolicy="no-referrer"
-            srcDoc={preview}
-            onLoad={connectPreview}
-            className="absolute inset-0 size-full bg-white scheme-light"
-          />
+          <>
+            {preview && (
+              // A new iframe per document: changing an iframe's srcDoc
+              // navigates it, and every navigation adds browser history.
+              <iframe
+                key={preview}
+                ref={frame}
+                title="Website preview"
+                sandbox="allow-scripts"
+                referrerPolicy="no-referrer"
+                srcDoc={preview}
+                onLoad={connectPreview}
+                className="absolute inset-0 size-full bg-white scheme-light"
+              />
+            )}
+            {/* The page stays mounted underneath so the agent's tools work. */}
+            {isEmptyPage(site.html) && (
+              <div className="absolute inset-0 grid place-items-center bg-background">
+                <EmptyState title="Empty design">
+                  Press Talk and describe a website.
+                </EmptyState>
+              </div>
+            )}
+          </>
         ) : (
           <div className="absolute inset-0 grid place-items-center">
-            <NewDesign />
+            <EmptyState title="No designs" action={<NewDesign />} />
           </div>
         )}
         {notice && (

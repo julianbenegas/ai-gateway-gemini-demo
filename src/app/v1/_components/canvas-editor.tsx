@@ -38,26 +38,18 @@ const components: TLComponents = {
 }
 const assetUrls = getAssetUrls({ baseUrl: '/tldraw' })
 // Canvas overlays read colors from the JS theme, not CSS; mirror globals.css.
-const selection = {
-  selectionStroke: '#ff6c02',
-  selectionFill: 'rgb(255 108 2 / 0.16)',
-  selectedContrast: '#fafafa',
-}
 const themes = {
   default: {
     ...DEFAULT_THEME,
     colors: {
-      light: {
-        ...DEFAULT_THEME.colors.light,
-        background: '#fafafa',
-        negativeSpace: '#fafafa',
-        ...selection,
-      },
+      ...DEFAULT_THEME.colors,
       dark: {
         ...DEFAULT_THEME.colors.dark,
         background: '#040404',
         negativeSpace: '#040404',
-        ...selection,
+        selectionStroke: '#ff6c02',
+        selectionFill: 'rgb(255 108 2 / 0.16)',
+        selectedContrast: '#fafafa',
       },
     },
   },
@@ -80,7 +72,7 @@ export default function CanvasEditor({
 }) {
   const mount = useCallback(
     (editor: Editor) => {
-      editor.user.updateUserPreferences({ colorScheme: 'system' })
+      editor.user.updateUserPreferences({ colorScheme: 'dark' })
       if (!snapshot) seedFirstBoard(editor)
       const board = initialBoardId as TLPageId
       if (editor.getPage(board)) editor.setCurrentPage(board)

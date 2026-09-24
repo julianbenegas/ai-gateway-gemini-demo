@@ -3,7 +3,7 @@
 Voice-first website design with Gemini 3.8 Live through AI Gateway. Each example is a self-contained route, with its own UI, API, auth, and agent loop:
 
 - **`/v1/<board>` — canvas.** A tldraw board where websites are shapes. The agent reads the board, edits HTML, and draws with native tldraw shapes. The board is saved to Redis and rendered on the server.
-- **`/v2/<design>` — studio.** A website you point at, draw on, and annotate. New designs start empty and the agent writes them.
+- **`/v2/<design>` — studio.** A website you point at, draw on, and annotate. New designs start empty, with a prompt to talk, and the agent writes them.
 
 `/` redirects to `/v1`. Voice is the only way to talk to the agent. There is no chat.
 
@@ -45,7 +45,7 @@ Everything specific to an example lives in its folder, including the voice loop 
 
 **API.** Each example's `_server/api.ts` is an Elysia app mounted at `/<example>/api`, validated with the same zod schemas the tools use. The browser calls it through Eden (`_lib/rpc.ts`), so requests and responses are typed end to end. `lib/api.ts` rejects cross-origin writes and maps errors to `{ error }` responses. Declare route handlers `async`; Elysia only catches rejected promises from async functions.
 
-Styling is Tailwind 4 with tokens in `src/app/globals.css`: Geist Mono and the forums.basehub.com palette, including its orange accent, following the system color scheme. tldraw draws its selection overlays from a JS theme, so `v1/_components/canvas-editor.tsx` mirrors the accent there. Sidebars are resizable; their width is kept in a cookie so the server renders it.
+Styling is Tailwind 4 with tokens in `src/app/globals.css`: Geist Mono and forums.basehub.com's dark palette with its orange accent. The app is dark only, tldraw included; website previews keep their own colors. tldraw draws its selection overlays from a JS theme, so `v1/_components/canvas-editor.tsx` mirrors the accent there. Sidebars are resizable; their width is kept in a cookie so the server renders it.
 
 ## Agent tools
 

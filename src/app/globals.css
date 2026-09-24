@@ -1,36 +1,8 @@
 @import 'tailwindcss';
 
-/* Palette after forums.basehub.com, with its orange accent. */
-:root,
-.tl-theme__light {
-  --background: #fafafa;
-  --shade: #f0f0f0;
-  --shade-hover: #e3e3e3;
-  --border: #d9d9d9;
-  --faint: #909090;
-  --muted: #646464;
-  --dim: #303030;
-  --bright: #040404;
-  --accent: #ff6c02;
-  --danger: #c70000;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #040404;
-    --shade: #161616;
-    --shade-hover: #1b1b1b;
-    --border: #252525;
-    --faint: #646464;
-    --muted: #909090;
-    --dim: #dedede;
-    --bright: #fafafa;
-    --danger: #ff6568;
-  }
-}
-
-/* tldraw can pick its own scheme, so its dark theme carries the tokens too. */
-.tl-theme__dark {
+/* forums.basehub.com's dark palette and orange accent. The app is dark only. */
+:root {
+  color-scheme: dark;
   --background: #040404;
   --shade: #161616;
   --shade-hover: #1b1b1b;
@@ -39,6 +11,7 @@
   --muted: #909090;
   --dim: #dedede;
   --bright: #fafafa;
+  --accent: #ff6c02;
   --danger: #ff6568;
 }
 
@@ -61,9 +34,6 @@
 }
 
 @layer base {
-  :root {
-    color-scheme: light dark;
-  }
   body {
     @apply h-dvh overflow-hidden bg-background font-mono text-sm text-muted antialiased;
     letter-spacing: -0.02em;
@@ -88,7 +58,7 @@
   opacity: 0.5;
 }
 
-.tl-container:is(.tl-theme__light, .tl-theme__dark) {
+.tl-container.tl-theme__dark {
   outline: none;
   --tl-color-background: var(--background);
   --tl-color-panel: var(--background);
