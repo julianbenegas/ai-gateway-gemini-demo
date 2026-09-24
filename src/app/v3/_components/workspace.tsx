@@ -18,7 +18,7 @@ import { appsApi } from '../_lib/rpc'
 import type { App } from '../_lib/types'
 import { AppList } from './app-list'
 import { Chat } from './chat'
-import { DesktopView } from './desktop-view'
+import { ScreenPane } from './screen-pane'
 import { NewApp } from './new-app'
 import { VoiceBar } from './voice-bar'
 
@@ -113,7 +113,7 @@ export function Workspace({
                 />
               }
             />
-            <DesktopView appId={appId} />
+            <ScreenPane appId={appId} />
           </>
         ) : (
           <div className="col-span-2 grid place-items-center">

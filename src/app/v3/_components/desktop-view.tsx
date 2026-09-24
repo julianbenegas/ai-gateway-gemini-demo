@@ -88,11 +88,11 @@ export function DesktopView({ appId }: { appId: string }) {
     <section
       aria-label="Desktop"
       data-status={status}
-      className="relative min-h-0 min-w-0 p-3 pl-0"
+      className="relative size-full"
     >
       <div ref={screen} className="size-full overflow-hidden bg-shade" />
       {status !== 'connected' && (
-        <div className="absolute inset-3 left-0 grid place-items-center bg-shade/90">
+        <div className="absolute inset-0 grid place-items-center bg-shade/90">
           <div className="flex max-w-80 flex-col items-center gap-2 text-center">
             <p className="flex items-center gap-2 text-faint">
               <LoaderCircle size={14} className="animate-spin" />

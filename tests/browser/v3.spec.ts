@@ -114,6 +114,21 @@ test('the composer shows the model, cycles its thinking level, and remembers it'
   await expect(composer.getByRole('button', { name: 'Send' })).toBeEnabled()
 })
 
+test('the screen pane starts on the computer tab', async ({ page }) => {
+  await stubDesktop(page)
+  await page.goto('/v3')
+  await createApp(page)
+  const tabs = page.getByRole('tablist', { name: 'Screen' })
+  await expect(tabs.getByRole('tab')).toHaveText(['Computer'])
+  await expect(tabs.getByRole('tab', { name: 'Computer' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  // The desktop panel keeps its size while another tab is on top.
+  const desktop = page.getByRole('region', { name: 'Desktop' })
+  expect((await desktop.boundingBox())!.width).toBeGreaterThan(300)
+})
+
 test('the desktop viewer keeps retrying when the connection fails', async ({
   page,
 }) => {

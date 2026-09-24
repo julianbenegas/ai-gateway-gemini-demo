@@ -21,4 +21,6 @@ export const toolLabels: Record<string, string> = {
   key: 'Pressing keys',
   scroll: 'Scrolling',
   bash: 'Running a command',
+  show_preview: 'Showing the preview',
+  show_computer: 'Showing the computer',
 }

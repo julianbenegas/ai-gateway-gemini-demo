@@ -97,6 +97,51 @@ export async function desktopSocket({ appId }: { appId: string }) {
   return url.href
 }
 
+/**
+ * Makes a port of the app's computer public, so the user's Preview tab can
+ * show it. It never starts a server: something must already answer there.
+ */
+export async function exposePort({
+  sandbox,
+  port,
+  path,
+}: {
+  sandbox: Sandbox
+  port: number
+  path: string
+}) {
+  if (port === NOVNC_PORT)
+    return { error: `Port ${port} is the desktop itself; pick another.` }
+  const probe = await sandbox.runCommand({
+    cmd: 'curl',
+    args: [
+      '-s',
+      '-o',
+      '/dev/null',
+      '-w',
+      '%{http_code}',
+      '--max-time',
+      '5',
+      `http://localhost:${port}${path}`,
+    ],
+  })
+  const status = Number(await probe.stdout())
+  if (!status)
+    return {
+      error: `Nothing is serving port ${port}. Start the server with bash, in the background, then try again.`,
+    }
+  // `ports` replaces the whole list, so keep the ones already exposed.
+  const ports = sandbox.routes.map((route) => route.port)
+  if (!ports.includes(port)) {
+    if (ports.length >= 15)
+      return { error: 'A sandbox exposes at most 15 ports.' }
+    await sandbox.update({ ports: [...ports, port] })
+  }
+  const url = new URL((await Sandbox.get({ name: sandbox.name })).domain(port))
+  url.pathname = path
+  return { port, status, url: url.href, host: url.host }
+}
+
 export async function deleteDesktop({ appId }: { appId: string }) {
   const sandbox = await Sandbox.get({ name: sandboxName(appId) }).catch(
     () => null,
