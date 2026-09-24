@@ -54,8 +54,8 @@ async function startSandboxServer(sandbox: Sandbox) {
 const SWAP =
   'rm -rf site.old; if [ -e site ]; then mv site site.old; fi; mv "$0" site; rm -rf site.old'
 
-const openSandbox = (designId: string) =>
-  Sandbox.getOrCreate({
+async function openSandbox(designId: string) {
+  const options = {
     name: sandboxName(designId),
     image: 'vercel/sandbox/node:24',
     ports: [PORT],
@@ -63,7 +63,19 @@ const openSandbox = (designId: string) =>
     persistent: false,
     resume: true,
     onCreate: startSandboxServer,
-  })
+  }
+  try {
+    return await Sandbox.getOrCreate(options)
+  } catch (error) {
+    // A stopped sandbox that isn't persistent keeps no snapshot, so it can't
+    // resume; replace it. Its files come from Redis anyway.
+    if (!String((error as Error)?.message).includes('no snapshot available'))
+      throw error
+    const stale = await Sandbox.get({ name: options.name }).catch(() => null)
+    await stale?.delete()
+    return Sandbox.getOrCreate(options)
+  }
+}
 
 async function sandboxPreview({
   designId,
