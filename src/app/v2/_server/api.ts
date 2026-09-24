@@ -103,9 +103,7 @@ export const api = new Elysia({ prefix: '/v2/api' })
         owner: await requireOwner(),
         id: params.id,
       })
-      return {
-        url: await showPreview({ designId: site.id, files: site.files }),
-      }
+      return showPreview({ designId: site.id, files: site.files })
     },
     { params: design },
   )

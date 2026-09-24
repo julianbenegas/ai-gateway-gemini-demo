@@ -273,9 +273,11 @@
     },
     true,
   )
-  // Links to other pages of the site open here, as on the web. The preview
-  // can't open windows, so links to other sites open in a new tab from the
-  // studio. This runs last, so the site's own click handlers go first.
+  // Links to pages of the site open here, replacing the page rather than
+  // adding to the browser's history, which stays the studio's; the studio
+  // keeps the preview's own for its back button. The preview can't open
+  // windows, so links to other sites open in a new tab from the studio. This
+  // runs last, so the site's own click handlers go first.
   window.addEventListener('click', (event) => {
     if (mode !== 'browse' || event.defaultPrevented) return
     const link =
@@ -284,14 +286,11 @@
       return
     const url = new URL(link.href)
     if (url.protocol === 'javascript:') return
+    event.preventDefault()
     if (url.origin === location.origin) {
-      if (link.target && link.target !== '_self') {
-        event.preventDefault()
-        location.assign(url.href)
-      }
+      location.replace(url.href)
       return
     }
-    event.preventDefault()
     if (['http:', 'https:', 'mailto:'].includes(url.protocol))
       port?.postMessage({ type: 'open-link', url: url.href })
   })

@@ -81,7 +81,7 @@ async function sandboxPreview({
   })
   if (swap.exitCode !== 0)
     throw new Error(`Updating the preview failed: ${await swap.stderr()}`)
-  return sandbox.domain(PORT)
+  return { url: sandbox.domain(PORT), port: PORT }
 }
 
 type LocalServer = { url: string; root: string; process: ChildProcess }
@@ -135,7 +135,7 @@ async function localPreview({
   }
   await rm(join(root, 'site'), { recursive: true, force: true })
   await rename(staging, join(root, 'site'))
-  return url
+  return { url, port: Number(new URL(url).port) }
 }
 
 // One update per design at a time, so the newest files land last.
@@ -143,7 +143,7 @@ const updates = new Map<string, Promise<unknown>>()
 
 /**
  * Brings the design's preview up to date with its files, starting a server
- * if there is none, and returns the preview's URL.
+ * if there is none, and returns the preview's URL and its server's port.
  */
 export function showPreview(options: { designId: string; files: SiteFiles }) {
   const update = (updates.get(options.designId) ?? Promise.resolve())

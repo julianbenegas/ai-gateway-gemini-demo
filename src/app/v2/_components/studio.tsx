@@ -24,6 +24,7 @@ import { zip } from '../_lib/zip'
 import { DesignList } from './design-list'
 import { NewDesign } from './new-design'
 import { NotesPanel } from './notes-panel'
+import { PreviewToolbar } from './preview-toolbar'
 import { SourceDialog } from './source-dialog'
 import { StudioDock, type StudioMode } from './studio-dock'
 import { StudioHeader } from './studio-header'
@@ -98,11 +99,14 @@ export function Studio({
   }, [hint])
   // The design's preview server, from its sandbox; see _server/preview.ts.
   const [preview, setPreview] = useState<
-    { url: string } | { error: string } | null
+    { url: string; port: number } | { error: string } | null
   >(null)
   // A new iframe per load: changing an iframe's src navigates it, and every
   // navigation adds browser history.
   const [frame, setFrame] = useState({ key: 0, path: '/' })
+  // The preview's own history, for its back and forward buttons. Pages never
+  // add to the browser's; see the bridge's link handling.
+  const [history, setHistory] = useState({ paths: ['/'], index: 0 })
   const [page, setPage] = useState<PreviewPage | null>(null)
   const [mode, setMode] = useState<StudioMode>('browse')
   const [selection, setSelection] = useState<ElementTarget | null>(null)
@@ -126,8 +130,8 @@ export function Studio({
 
   // Refs let async work read what is current without stale closures.
   const port = useRef<MessagePort | null>(null)
-  const snapshot = useRef({ site, page, mode, selection, annotations })
-  snapshot.current = { site, page, mode, selection, annotations }
+  const snapshot = useRef({ site, page, history, mode, selection, annotations })
+  snapshot.current = { site, page, history, mode, selection, annotations }
   const mutations = useRef<Promise<unknown>>(Promise.resolve())
   const queries = useRef(new Map<string, PendingQuery>())
   const connectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -170,11 +174,9 @@ export function Studio({
   /** Copies the design's files to its preview, then reloads the page. */
   const updatePreview = useCallback(async () => {
     try {
-      const { url } = await studioApi.showPreview({
-        id: snapshot.current.site!.id,
-      })
-      setPreview({ url })
-      showPage(snapshot.current.page?.path ?? '/')
+      setPreview(await studioApi.showPreview({ id: snapshot.current.site!.id }))
+      const { paths, index } = snapshot.current.history
+      showPage(paths[index])
     } catch (error) {
       setPreview({
         error: error instanceof Error ? error.message : String(error),
@@ -185,6 +187,15 @@ export function Studio({
   useEffect(() => {
     if (siteId) void mutate(updatePreview)
   }, [siteId, mutate, updatePreview])
+
+  const goBy = (step: number) => {
+    const index = history.index + step
+    if (index < 0 || index >= history.paths.length) return
+    const next = { ...history, index }
+    snapshot.current.history = next
+    setHistory(next)
+    showPage(history.paths[index])
+  }
 
   const saveDrawing = useCallback(
     async (annotation: SiteAnnotation) => {
@@ -434,6 +445,16 @@ export function Studio({
         }
         snapshot.current.page = data.page
         setPage(data.page)
+        // A page it didn't load from history, like a link's, is a new entry.
+        const { paths, index } = snapshot.current.history
+        if (paths[index] !== data.page.path) {
+          const next = {
+            paths: [...paths.slice(0, index + 1), data.page.path],
+            index: index + 1,
+          }
+          snapshot.current.history = next
+          setHistory(next)
+        }
         sendState()
       }
       if (data.type === 'selection') {
@@ -595,142 +616,157 @@ export function Studio({
           onDelete={setDeleting}
         />
       )}
-      <div className="relative isolate col-start-2 row-start-2 min-h-0 overflow-hidden">
-        {site ? (
-          <>
-            {preview && 'url' in preview && (
-              <iframe
-                key={frame.key}
-                title="Website preview"
-                sandbox="allow-scripts allow-same-origin"
-                referrerPolicy="no-referrer"
-                src={new URL(frame.path, preview.url).href}
-                onLoad={(event) => connectPreview(event.currentTarget)}
-                className="absolute inset-0 size-full bg-white scheme-light"
-              />
-            )}
-            {/* The page stays mounted underneath so the agent's tools work. */}
-            {isEmptyDesign(site.files) ? (
-              <div className={overlay}>
-                <EmptyState title="Empty design">
-                  Press Talk and describe a website.
-                </EmptyState>
-              </div>
-            ) : !preview ? (
-              <div className={overlay}>
-                <p className="flex items-center gap-2 text-faint">
-                  <LoaderCircle size={14} className="animate-spin" />
-                  Starting the preview
-                </p>
-              </div>
-            ) : (
-              'error' in preview && (
-                <div className={overlay}>
-                  <div className="flex flex-col items-center gap-3 text-center">
-                    <p role="alert" className="max-w-80 text-danger">
-                      {preview.error}
-                    </p>
-                    <Button
-                      variant="accent"
-                      onClick={() => {
-                        failedLoads.current = 0
-                        setPreview(null)
-                        void mutate(updatePreview)
-                      }}
-                    >
-                      Try again
-                    </Button>
-                  </div>
-                </div>
-              )
-            )}
-          </>
-        ) : (
-          <div className="absolute inset-0 grid place-items-center">
-            <EmptyState title="No designs" action={<NewDesign />} />
-          </div>
-        )}
-        {hint && !notice && (
-          <Notice
-            tone="done"
-            className="absolute top-3 left-1/2 -translate-x-1/2"
-            onDismiss={() => setHint(null)}
-          >
-            {hint}
-          </Notice>
-        )}
-        {notice && (
-          <Notice
-            tone="error"
-            className="absolute top-3 left-1/2 -translate-x-1/2"
-            action={
-              !!failedDrawings.length && (
-                <Button
-                  size="sm"
-                  className="underline"
-                  onClick={() => {
-                    setError(null)
-                    for (const drawing of draftDrawings.filter((draft) =>
-                      failedDrawings.includes(draft.id),
-                    ))
-                      void saveDrawing(drawing)
-                  }}
-                >
-                  Retry save
-                </Button>
-              )
-            }
-            onDismiss={() => {
-              setError(null)
-              voice.dismissNotice()
-            }}
-          >
-            {notice}
-          </Notice>
-        )}
+      <div className="col-start-2 row-start-2 flex min-h-0 flex-col">
         {site && (
-          <StudioDock
-            voice={{ ...voice, end: endVoice }}
-            transcriptOpen={transcriptOpen}
-            onToggleTranscript={() => setTranscriptOpen(!transcriptOpen)}
-            mode={mode}
-            selection={selection}
-            noteOpen={noteOpen}
-            saving={saving}
-            annotationCount={annotations.length}
-            canUndoDrawing={!!lastDrawing && !savingDrawings}
-            disabled={!site}
-            onMode={(next) => {
-              setMode(next)
-              if (next === 'draw') setNoteOpen(false)
-            }}
-            onStartVoice={() => {
-              setMode((current) => (current === 'draw' ? 'draw' : 'select'))
-              void voice.start()
-            }}
-            onClearSelection={() => setSelection(null)}
-            onToggleNote={() => {
-              setMode('select')
-              setNoteOpen(!noteOpen)
-            }}
-            onCloseNote={() => setNoteOpen(false)}
-            onAddNote={addNote}
-            onUndoDrawing={() => {
-              if (lastDrawing) void deleteNote(lastDrawing.id)
-            }}
-            onToggleNotes={() => setNotesOpen(!notesOpen)}
+          <PreviewToolbar
+            port={preview && 'port' in preview ? preview.port : null}
+            path={history.paths[history.index]}
+            canGoBack={history.index > 0}
+            canGoForward={history.index < history.paths.length - 1}
+            disabled={!preview || !('url' in preview)}
+            onBack={() => goBy(-1)}
+            onForward={() => goBy(1)}
+            onReload={() => showPage(history.paths[history.index])}
+            onNavigate={showPage}
           />
         )}
-        {notesOpen && (
-          <NotesPanel
-            annotations={annotations}
-            positions={positions}
-            pendingIds={draftDrawings.map((draft) => draft.id)}
-            page={page?.file ?? null}
-            onDelete={(id) => void deleteNote(id)}
-            onClose={() => setNotesOpen(false)}
-          />
-        )}
+        <div className="relative isolate min-h-0 flex-1 overflow-hidden">
+          {site ? (
+            <>
+              {preview && 'url' in preview && (
+                <iframe
+                  key={frame.key}
+                  title="Website preview"
+                  sandbox="allow-scripts allow-same-origin"
+                  referrerPolicy="no-referrer"
+                  src={new URL(frame.path, preview.url).href}
+                  onLoad={(event) => connectPreview(event.currentTarget)}
+                  className="absolute inset-0 size-full bg-white scheme-light"
+                />
+              )}
+              {/* The page stays mounted underneath so the agent's tools work. */}
+              {isEmptyDesign(site.files) ? (
+                <div className={overlay}>
+                  <EmptyState title="Empty design">
+                    Press Talk and describe a website.
+                  </EmptyState>
+                </div>
+              ) : !preview ? (
+                <div className={overlay}>
+                  <p className="flex items-center gap-2 text-faint">
+                    <LoaderCircle size={14} className="animate-spin" />
+                    Starting the preview
+                  </p>
+                </div>
+              ) : (
+                'error' in preview && (
+                  <div className={overlay}>
+                    <div className="flex flex-col items-center gap-3 text-center">
+                      <p role="alert" className="max-w-80 text-danger">
+                        {preview.error}
+                      </p>
+                      <Button
+                        variant="accent"
+                        onClick={() => {
+                          failedLoads.current = 0
+                          setPreview(null)
+                          void mutate(updatePreview)
+                        }}
+                      >
+                        Try again
+                      </Button>
+                    </div>
+                  </div>
+                )
+              )}
+            </>
+          ) : (
+            <div className="absolute inset-0 grid place-items-center">
+              <EmptyState title="No designs" action={<NewDesign />} />
+            </div>
+          )}
+          {hint && !notice && (
+            <Notice
+              tone="done"
+              className="absolute top-3 left-1/2 -translate-x-1/2"
+              onDismiss={() => setHint(null)}
+            >
+              {hint}
+            </Notice>
+          )}
+          {notice && (
+            <Notice
+              tone="error"
+              className="absolute top-3 left-1/2 -translate-x-1/2"
+              action={
+                !!failedDrawings.length && (
+                  <Button
+                    size="sm"
+                    className="underline"
+                    onClick={() => {
+                      setError(null)
+                      for (const drawing of draftDrawings.filter((draft) =>
+                        failedDrawings.includes(draft.id),
+                      ))
+                        void saveDrawing(drawing)
+                    }}
+                  >
+                    Retry save
+                  </Button>
+                )
+              }
+              onDismiss={() => {
+                setError(null)
+                voice.dismissNotice()
+              }}
+            >
+              {notice}
+            </Notice>
+          )}
+          {site && (
+            <StudioDock
+              voice={{ ...voice, end: endVoice }}
+              transcriptOpen={transcriptOpen}
+              onToggleTranscript={() => setTranscriptOpen(!transcriptOpen)}
+              mode={mode}
+              selection={selection}
+              noteOpen={noteOpen}
+              saving={saving}
+              annotationCount={annotations.length}
+              canUndoDrawing={!!lastDrawing && !savingDrawings}
+              disabled={!site}
+              onMode={(next) => {
+                setMode(next)
+                if (next === 'draw') setNoteOpen(false)
+              }}
+              onStartVoice={() => {
+                setMode((current) => (current === 'draw' ? 'draw' : 'select'))
+                void voice.start()
+              }}
+              onClearSelection={() => setSelection(null)}
+              onToggleNote={() => {
+                setMode('select')
+                setNoteOpen(!noteOpen)
+              }}
+              onCloseNote={() => setNoteOpen(false)}
+              onAddNote={addNote}
+              onUndoDrawing={() => {
+                if (lastDrawing) void deleteNote(lastDrawing.id)
+              }}
+              onToggleNotes={() => setNotesOpen(!notesOpen)}
+            />
+          )}
+          {notesOpen && (
+            <NotesPanel
+              annotations={annotations}
+              positions={positions}
+              pendingIds={draftDrawings.map((draft) => draft.id)}
+              page={page?.file ?? null}
+              onDelete={(id) => void deleteNote(id)}
+              onClose={() => setNotesOpen(false)}
+            />
+          )}
+        </div>
       </div>
       {deleting && (
         <ConfirmDialog

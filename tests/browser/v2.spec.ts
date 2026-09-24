@@ -675,3 +675,65 @@ test('pages are files at their own URLs, each with its own notes', async ({
   expect(missing.status()).toBe(404)
   expect(await missing.text()).toContain("This page doesn't exist yet.")
 })
+
+test('the preview has a browser toolbar with its own history', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page, '**/v2/api/realtime**')
+  await page.goto('/v2')
+  await createDesign(page)
+  await startVoice(page)
+  await gateway.call('write_file', {
+    path: 'about.html',
+    content: `<!doctype html><html><body><h1>About</h1><a href="/">Home</a></body></html>`,
+  })
+  await gateway.call('write_file', {
+    path: 'index.html',
+    content: `<!doctype html><html><body><h1>Home</h1><a href="/about">About</a></body></html>`,
+  })
+  const heading = preview(page).getByRole('heading', { level: 1 })
+  const toolbar = page.getByRole('group', { name: 'Preview' })
+  const address = toolbar.getByRole('textbox', { name: 'Address' })
+  const back = toolbar.getByRole('button', { name: 'Back' })
+  const forward = toolbar.getByRole('button', { name: 'Forward' })
+  await expect(heading).toHaveText('Home')
+  await expect(toolbar).toContainText(/localhost:\d+/)
+  await expect(address).toHaveValue('/')
+  await expect(back).toBeDisabled()
+  await expect(forward).toBeDisabled()
+  // Browse mode follows links; talking starts in select mode.
+  await page.getByRole('button', { name: 'Select an element' }).click()
+  const browserHistory = await page.evaluate(() => history.length)
+  await preview(page).getByRole('link', { name: 'About' }).click()
+  await expect(heading).toHaveText('About')
+  await expect(address).toHaveValue('/about')
+  expect(await page.evaluate(() => history.length)).toBe(browserHistory)
+  await back.click()
+  await expect(heading).toHaveText('Home')
+  await expect(address).toHaveValue('/')
+  await forward.click()
+  await expect(heading).toHaveText('About')
+  await expect(forward).toBeDisabled()
+  await address.fill('/nope')
+  await address.press('Enter')
+  await expect(
+    preview(page).getByText("This page doesn't exist yet."),
+  ).toBeVisible()
+  await expect(address).toHaveValue('/nope')
+  await back.click()
+  await expect(heading).toHaveText('About')
+  await toolbar.getByRole('button', { name: 'Reload' }).click()
+  await expect(heading).toHaveText('About')
+  await expect(forward).toBeEnabled()
+  await address.fill('/elsewhere')
+  await address.press('Escape')
+  await expect(address).toHaveValue('/about')
+  // An agent edit reloads the page the preview is on.
+  await gateway.call('edit_file', {
+    path: 'about.html',
+    replacements: [{ search: 'About', replace: 'About us' }],
+  })
+  await expect(heading).toHaveText('About us')
+  await expect(address).toHaveValue('/about')
+  expect(await page.evaluate(() => history.length)).toBe(browserHistory)
+})
