@@ -4,18 +4,25 @@ import { readFile, writeFile } from 'node:fs/promises'
 
 test('API origin checks accept the browser host and reject other origins', async ({
   request,
+  baseURL,
 }) => {
   const rejected = await request.post('/api/realtime', {
     headers: { Origin: 'https://another.example' },
   })
   expect(rejected.status()).toBe(403)
   const accepted = await request.post('/api/inspect', {
-    headers: { Origin: 'http://localhost:3000' },
+    headers: { Origin: new URL(baseURL!).origin },
     data: {},
   })
   expect(accepted.status()).toBe(400)
   expect(await accepted.json()).toEqual({ error: 'Invalid inspection request' })
 })
+
+/** Records of the board this browser saved to the server. */
+async function savedRecords(page: Page): Promise<Record<string, any>[]> {
+  const snapshot = await (await page.request.get('/api/canvas')).json()
+  return Object.values(snapshot?.document.store ?? {})
+}
 
 async function openWorkspace(page: Page) {
   await page.goto('/')
@@ -96,7 +103,7 @@ test('incomplete tool arguments keep voice connected and recover with a short ed
   expect(result.updatedIds).toEqual(['shape:forma'])
   expect(result.matches).toEqual([1])
   await expect(heading).toContainText('Great.')
-  await expect(page.locator('.voice-notice')).not.toContainText(
+  await expect(page.locator('[data-notice]')).not.toContainText(
     'Failed to parse',
   )
 })
@@ -171,7 +178,7 @@ test('malformed tool recovery retries once and deduplicates calls', async ({
     })
     await expect.poll(() => gateway.outputs.has(`call-${id}`)).toBe(true)
   }
-  await expect(page.locator('.voice-notice.is-error')).toHaveText(
+  await expect(page.locator('[data-notice][data-tone="error"]')).toHaveText(
     /That edit didn’t finish. Still listening./,
   )
   expect(
@@ -296,56 +303,33 @@ test('HTML editing, native duplication, and separate boards survive reload', asy
   ).toContainText('Thoughtful spaces.')
   await page.getByRole('button', { name: 'Select — V', exact: true }).click()
   await page.keyboard.press('ControlOrMeta+d')
-  await expect(page.locator('.website-shape iframe')).toHaveCount(2)
+  await expect(page.locator('[data-website] iframe')).toHaveCount(2)
   await page.getByRole('button', { name: 'New board', exact: true }).click()
   await page.getByRole('textbox', { name: 'Board name' }).fill('Coffee ideas')
   await page.getByRole('textbox', { name: 'Board name' }).press('Enter')
-  await expect(page.locator('.website-shape iframe')).toHaveCount(0)
-  await page.getByTestId('main-menu.button').click()
+  await expect(page.locator('[data-website] iframe')).toHaveCount(0)
+  await page.locator('[data-canvas]').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Add website', exact: true }).click()
-  await expect(page.locator('.website-shape iframe')).toHaveCount(1)
+  await expect(page.locator('[data-website] iframe')).toHaveCount(1)
   await page.getByRole('button', { name: 'First ideas', exact: true }).click()
-  await expect(page.locator('.website-shape iframe')).toHaveCount(2)
+  await expect(page.locator('[data-website] iframe')).toHaveCount(2)
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          new Promise<boolean>((resolve, reject) => {
-            const request = indexedDB.open('TLDRAW_DOCUMENT_v2margin-board-v1')
-            request.onerror = () => reject(request.error)
-            request.onsuccess = () => {
-              const db = request.result
-              const records = db
-                .transaction('records')
-                .objectStore('records')
-                .getAll()
-              records.onsuccess = () => {
-                resolve(
-                  records.result.some(
-                    (record) =>
-                      record.typeName === 'page' &&
-                      record.name === 'Coffee ideas',
-                  ) &&
-                    records.result.filter(
-                      (record) =>
-                        record.typeName === 'shape' &&
-                        record.type === 'website',
-                    ).length === 3,
-                )
-                db.close()
-              }
-              records.onerror = () => {
-                reject(records.error)
-                db.close()
-              }
-            }
-          }),
-      ),
-    )
+    .poll(async () => {
+      const records = await savedRecords(page)
+      return (
+        records.some(
+          (record) =>
+            record.typeName === 'page' && record.name === 'Coffee ideas',
+        ) &&
+        records.filter(
+          (record) => record.typeName === 'shape' && record.type === 'website',
+        ).length === 3
+      )
+    })
     .toBe(true)
   await page.reload()
   await page.getByRole('button', { name: 'First ideas', exact: true }).click()
-  await expect(page.locator('.website-shape iframe')).toHaveCount(2)
+  await expect(page.locator('[data-website] iframe')).toHaveCount(2)
   await expect(
     page
       .locator('iframe[title="Forma · Starting point"]')
@@ -410,7 +394,7 @@ test('response failures report their cause and token usage without ending voice'
   await openWorkspace(page)
   await connectVoice(page)
   gateway.send({ type: 'response-created', responseId: 'limited' })
-  await expect(page.locator('.voice-state')).toContainText('Thinking')
+  await expect(page.locator('[data-voice-state]')).toContainText('Thinking')
   gateway.send({
     type: 'function-call-arguments-delta',
     responseId: 'limited',
@@ -418,7 +402,7 @@ test('response failures report their cause and token usage without ending voice'
     callId: 'call-writing',
     delta: '{',
   })
-  await expect(page.locator('.voice-state')).toContainText('Building')
+  await expect(page.locator('[data-voice-state]')).toContainText('Building')
   gateway.send({
     type: 'response-done',
     responseId: 'limited',
@@ -431,7 +415,7 @@ test('response failures report their cause and token usage without ending voice'
       },
     },
   })
-  await expect(page.locator('.voice-notice')).toContainText('output limit')
+  await expect(page.locator('[data-notice]')).toContainText('output limit')
   await expect(
     page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
@@ -456,7 +440,7 @@ test('response failures report their cause and token usage without ending voice'
       },
     },
   })
-  await expect(page.locator('.voice-notice')).toContainText('context limit')
+  await expect(page.locator('[data-notice]')).toContainText('context limit')
   await expect(
     page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
@@ -470,20 +454,20 @@ test('a silent response shows a waiting notice and clears it when progress resum
   await connectVoice(page)
   await page.clock.install()
   gateway.send({ type: 'speech-stopped' })
-  await expect(page.locator('.voice-state')).toContainText('Thinking')
+  await expect(page.locator('[data-voice-state]')).toContainText('Thinking')
   await page.clock.fastForward(50000)
-  await expect(page.locator('.voice-notice')).toContainText('Still waiting')
+  await expect(page.locator('[data-notice]')).toContainText('Still waiting')
   await expect(
     page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
   gateway.send({ type: 'response-created', responseId: 'resumed' })
-  await expect(page.locator('.voice-notice')).toHaveCount(0)
+  await expect(page.locator('[data-notice]')).toHaveCount(0)
   gateway.send({
     type: 'response-done',
     responseId: 'resumed',
     status: 'completed',
   })
-  await expect(page.locator('.voice-state')).toContainText('Listening')
+  await expect(page.locator('[data-voice-state]')).toContainText('Listening')
 })
 
 test('known shapes remain editable when the visible board and selection change', async ({
@@ -615,29 +599,9 @@ test('HTML over 60k edits and persists without selection, hashes, or a page toke
       .getByRole('heading'),
   ).toContainText('Great.')
   await expect
-    .poll(() =>
-      page.evaluate(
-        (expected) =>
-          new Promise<boolean>((resolve, reject) => {
-            const request = indexedDB.open('TLDRAW_DOCUMENT_v2margin-board-v1')
-            request.onerror = () => reject(request.error)
-            request.onsuccess = () => {
-              const db = request.result
-              const record = db
-                .transaction('records')
-                .objectStore('records')
-                .get('shape:forma')
-              record.onsuccess = () => {
-                resolve(record.result?.props.html === expected)
-                db.close()
-              }
-              record.onerror = () => {
-                reject(record.error)
-                db.close()
-              }
-            }
-          }),
-        html,
+    .poll(async () =>
+      (await savedRecords(page)).some(
+        (record) => record.id === 'shape:forma' && record.props?.html === html,
       ),
     )
     .toBe(true)
@@ -862,8 +826,9 @@ test('agent interaction is voice only and has no conversation panel', async ({
     page.locator('.agent-panel, .conversation, .composer'),
   ).toHaveCount(0)
   await connectVoice(page)
-  await expect(page.locator('.voice-state')).toContainText('Listening')
-  await expect(page.locator('.canvas-container')).toHaveCSS('right', '0px')
+  await expect(page.locator('[data-voice-state]')).toContainText('Listening')
+  const canvas = (await page.locator('[data-canvas]').boundingBox())!
+  expect(canvas.x + canvas.width).toBe(page.viewportSize()!.width)
 })
 
 test('cancelling a pending microphone request stops late audio without connecting', async ({
@@ -934,12 +899,12 @@ test('a failed Gateway connection leaves an actionable error and allows retry', 
   )
   await openWorkspace(page)
   await page.getByRole('button', { name: 'Start voice', exact: true }).click()
-  await expect(page.locator('.voice-notice.is-error')).toContainText(
+  await expect(page.locator('[data-notice][data-tone="error"]')).toContainText(
     'AI Gateway',
   )
-  await expect(page.locator('.voice-notice.is-error')).not.toContainText(
-    'development credentials',
-  )
+  await expect(
+    page.locator('[data-notice][data-tone="error"]'),
+  ).not.toContainText('development credentials')
   await expect(
     page.getByRole('button', { name: 'Start voice', exact: true }),
   ).toBeEnabled()

@@ -1,36 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mockGateway } from './gateway'
-import { executeBash } from '../../src/lib/v2/execute-bash'
-import {
-  changedFiles,
-  HTML,
-  NOTES,
-  restoreFiles,
-} from '../../src/lib/v2/filesystem.mjs'
-import type { Design, SiteDocument } from '../../src/lib/v2/types'
-import { prepareHtml } from '../../src/lib/v2/html'
-
-test('a storage roundtrip does not mark untouched annotations as changed', async () => {
-  const before = {
-    files: {
-      [HTML]: { mode: 0o644, content: '<h1>Hello</h1>', type: 'file' as const },
-      [NOTES]: {
-        mode: 0o644,
-        content: '[{"id":"original"}]',
-        type: 'file' as const,
-      },
-    },
-  }
-  const result = await executeBash(
-    before,
-    "sed -i 's/Hello/Great/' index.html",
-    new AbortController().signal,
-  )
-  const changes = changedFiles(before, result.data)
-  expect(changes.writes[HTML]).toMatchObject({ content: '<h1>Great</h1>' })
-  expect(changes.writes).not.toHaveProperty(NOTES)
-  expect(changes.deletes).toEqual([])
-})
+import { applyReplacements } from '../../src/lib/replacements'
+import { prepareHtml } from '../../src/studio/server/html'
+import type { Design, SiteDocument } from '../../src/studio/types'
 
 async function mockFiles(page: Page) {
   const initial = (await (
@@ -45,6 +17,22 @@ async function mockFiles(page: Page) {
   )
   await page.route('**/api/v2/site**', async (route) => {
     const id = new URL(route.request().url()).searchParams.get('designId')
+    if (route.request().method() === 'PATCH') {
+      site = sites.get(id!)!
+      const edit = route.request().postDataJSON()
+      const result =
+        'html' in edit
+          ? { html: edit.html, matches: undefined }
+          : applyReplacements(site.html, edit.replacements)
+      site.html = prepareHtml(result.html)
+      return route.fulfill({
+        json: {
+          site,
+          matches: result.matches,
+          missed: !!result.matches?.includes(0),
+        },
+      })
+    }
     if (route.request().method() === 'POST') {
       const id = crypto.randomUUID()
       site = { ...initial, id, persisted: true, annotations: [] }
@@ -53,28 +41,6 @@ async function mockFiles(page: Page) {
     } else site = id ? sites.get(id)! : initial
     await route.fulfill({ json: site })
   })
-  await page.route('**/api/v2/bash**', async (route) => {
-    const id = new URL(route.request().url()).searchParams.get('designId')!
-    site = sites.get(id)!
-    const { command } = route.request().postDataJSON()
-    const output = await executeBash(
-      { files: { [HTML]: { type: 'file', content: site.html } } },
-      command,
-      new AbortController().signal,
-    )
-    site.html = prepareHtml(
-      await (await restoreFiles(output.data)).readFile(HTML),
-    )
-    await route.fulfill({
-      json: {
-        stdout: output.stdout,
-        stderr: output.stderr,
-        exitCode: output.exitCode,
-        site,
-        previewError: null,
-      },
-    })
-  })
   await page.route('**/api/v2/annotations**', async (route) => {
     const id = new URL(route.request().url()).searchParams.get('designId')!
     site = sites.get(id)!
@@ -82,7 +48,7 @@ async function mockFiles(page: Page) {
     site.annotations =
       route.request().method() === 'DELETE'
         ? site.annotations.filter((note) => note.id !== data.id)
-        : [...site.annotations, data]
+        : [...site.annotations, data as SiteDocument['annotations'][number]]
     await route.fulfill({ json: site.annotations })
   })
   return {
@@ -96,10 +62,7 @@ async function mockFiles(page: Page) {
 }
 
 function replaceCopy(search: string, replace: string) {
-  const source = `const fs = require('fs'); const p = '/vercel/margin/index.html'; fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(${JSON.stringify(search)}, ${JSON.stringify(replace)}));`
-  return {
-    command: `cat > /tmp/edit.js <<'JS'\n${source}\nJS\njs-exec /tmp/edit.js`,
-  }
+  return { replacements: [{ search, replace }] }
 }
 
 async function drawOnHeading(page: Page) {
@@ -154,7 +117,7 @@ test('freehand drawings stay anchored, persist, and give the agent DOM context o
   expect(
     gateway.sent.filter((event: any) => event.item?.type === 'text-message'),
   ).toEqual([])
-  await gateway.call('bash', replaceCopy('Good spaces.', 'Great spaces.'))
+  await gateway.call('edit_html', replaceCopy('Good spaces.', 'Great spaces.'))
   await expect(preview.getByRole('heading', { level: 1 })).toContainText(
     'Great spaces.',
   )
@@ -182,7 +145,7 @@ test('freehand drawings stay anchored, persist, and give the agent DOM context o
   ).toHaveText('1')
   await expect(path).toHaveCount(1)
   await page.getByRole('button', { name: 'Show annotations' }).click()
-  await expect(page.locator('.v2-notes')).toContainText('Freehand drawing')
+  await expect(page.locator('[data-notes]')).toContainText('Freehand drawing')
   await page.getByRole('button', { name: 'Delete annotation 1' }).click()
   await expect(path).toHaveCount(0)
   await page.reload()
@@ -199,7 +162,7 @@ test('failed drawing saves retain the stroke for retry', async ({ page }) => {
   await page.goto('/v2')
   await page.getByRole('button', { name: 'Draw on the website' }).click()
   await drawOnHeading(page)
-  await expect(page.locator('.v2-notice')).toContainText('Test save failure')
+  await expect(page.locator('[data-notice]')).toContainText('Test save failure')
   const paths = page
     .frameLocator('iframe[title="Website preview"]')
     .locator('[data-margin-drawing]')
@@ -214,14 +177,16 @@ test('failed drawing saves retain the stroke for retry', async ({ page }) => {
 
 test('v2 owns its session before exposing remote file and voice tools', async ({
   request,
+  baseURL,
 }) => {
-  const headers = { Origin: 'http://localhost:3000' }
+  const headers = { Origin: new URL(baseURL!).origin }
   const initial = await request.get('/api/v2/site')
   expect(initial.status()).toBe(200)
   expect((await initial.json()).persisted).toBe(false)
-  const write = await request.post('/api/v2/bash', {
+  const designId = crypto.randomUUID()
+  const write = await request.patch(`/api/v2/site?designId=${designId}`, {
     headers,
-    data: { command: 'pwd', executionId: crypto.randomUUID() },
+    data: { html: '<h1>Mine</h1>' },
   })
   expect(write.status()).toBe(401)
   const voice = await request.post('/api/v2/realtime', { headers })
@@ -230,66 +195,14 @@ test('v2 owns its session before exposing remote file and voice tools', async ({
     headers: { Origin: 'https://another.example' },
   })
   expect(foreign.status()).toBe(403)
-  const foreignBash = await request.post('/api/v2/bash', {
-    headers: { Origin: 'https://another.example' },
-    data: { command: 'pwd' },
-  })
-  expect(foreignBash.status()).toBe(403)
-  const anonymousCancel = await request.delete('/api/v2/bash', {
-    headers,
-    data: { executionId: crypto.randomUUID() },
-  })
-  expect(anonymousCancel.status()).toBe(401)
-  const foreignCancel = await request.delete('/api/v2/bash', {
-    headers: { Origin: 'https://another.example' },
-    data: { executionId: crypto.randomUUID() },
-  })
-  expect(foreignCancel.status()).toBe(403)
-})
-
-test('ending voice explicitly cancels the running remote Bash command', async ({
-  page,
-}) => {
-  await mockFiles(page)
-  const gateway = await mockGateway(page, '**/api/v2/realtime')
-  let executionId: string | undefined
-  let cancelledId: string | undefined
-  let finish: (() => void) | undefined
-  await page.route('**/api/v2/bash**', async (route) => {
-    const body = route.request().postDataJSON()
-    if (route.request().method() === 'DELETE') {
-      cancelledId = body.executionId
-      finish?.()
-      await route.fulfill({ json: { cancelled: true } })
-    } else {
-      executionId = body.executionId
-      await new Promise<void>((resolve) => {
-        finish = resolve
-      })
-      await route.abort().catch(() => {})
-    }
-  })
-  await page.goto('/v2')
-  await page
-    .getByRole('button', { name: 'Talk and annotate', exact: true })
-    .click()
-  await expect(
-    page.getByRole('button', { name: 'End voice session' }),
-  ).toBeVisible()
-  gateway.send({
-    type: 'function-call-arguments-done',
-    responseId: 'cancel-response',
-    itemId: 'cancel-item',
-    callId: 'cancel-call',
-    name: 'bash',
-    arguments: JSON.stringify({ command: 'sleep 30' }),
-  })
-  await expect.poll(() => executionId).toBeTruthy()
-  await page.getByRole('button', { name: 'End voice session' }).click()
-  await expect.poll(() => cancelledId).toBe(executionId)
-  await expect(
-    page.getByRole('button', { name: 'Talk and annotate', exact: true }),
-  ).toBeVisible()
+  const foreignWrite = await request.patch(
+    `/api/v2/site?designId=${designId}`,
+    {
+      headers: { Origin: 'https://another.example' },
+      data: { html: '<h1>Mine</h1>' },
+    },
+  )
+  expect(foreignWrite.status()).toBe(403)
 })
 
 test('one click starts voice, notes target DOM elements, and edits reload from the server', async ({
@@ -335,21 +248,23 @@ test('one click starts voice, notes target DOM elements, and edits reload from t
     attached: true,
     target: { id: selection.selection.id },
   })
-  const source = await gateway.call('bash', { command: 'cat index.html' })
-  expect(source.exitCode).toBe(0)
-  expect(source.stdout).toContain(selection.selection.id)
-  const failed = await gateway.call('bash', {
-    command: 'echo "fixable error" >&2; exit 7',
-  })
-  expect(failed.exitCode).toBe(7)
-  expect(failed.stderr).toContain('fixable error')
-  const edit = await gateway.call('bash', replaceCopy('Good spaces.', 'Great.'))
-  expect(edit.exitCode).toBe(0)
-  expect(edit).not.toHaveProperty('site')
+  const source = await gateway.call('read_html', {})
+  expect(source.html).toContain(selection.selection.id)
+  const missed = await gateway.call(
+    'edit_html',
+    replaceCopy('Not on this page', 'Nothing'),
+  )
+  expect(missed.matches).toEqual([0])
+  expect(missed.html).toContain('Good spaces.')
+  const edit = await gateway.call(
+    'edit_html',
+    replaceCopy('Good spaces.', 'Great.'),
+  )
+  expect(edit).toEqual({ ok: true, matches: [1] })
   await expect(preview.getByRole('heading', { level: 1 })).toContainText(
     'Great.',
   )
-  await expect(page.locator('.v2-selection')).toContainText('Great.')
+  await expect(page.locator('[data-selection]')).toContainText('Great.')
   await expect
     .poll(
       async () => (await gateway.call('read_selection', {})).selection?.text,
@@ -364,9 +279,11 @@ test('one click starts voice, notes target DOM elements, and edits reload from t
     'Great.',
   )
   await page.getByRole('button', { name: 'Show annotations' }).click()
-  await expect(page.locator('.v2-notes')).toContainText('Make this say Great.')
+  await expect(page.locator('[data-notes]')).toContainText(
+    'Make this say Great.',
+  )
   await page.getByRole('button', { name: 'Delete annotation 1' }).click()
-  await expect(page.locator('.v2-notes article')).toHaveCount(0)
+  await expect(page.locator('[data-notes] article')).toHaveCount(0)
   await page.getByRole('button', { name: 'View website source' }).click()
   await expect(
     page.getByRole('textbox', { name: 'Website HTML source' }),
@@ -399,10 +316,8 @@ test('a deleted target stays identifiable in its note without blocking further e
   await expect(
     page.getByRole('button', { name: 'Show annotations' }),
   ).toBeVisible()
-  await gateway.call('bash', {
-    command: `cat > index.html <<'HTML'
-<!doctype html><html><body><h1 data-margin-id="new-heading">A new page</h1></body></html>
-HTML`,
+  await gateway.call('write_html', {
+    html: '<!doctype html><html><body><h1 data-margin-id="new-heading">A new page</h1></body></html>',
   })
   await expect(preview.getByRole('heading')).toHaveText('A new page')
   await expect
@@ -414,7 +329,7 @@ HTML`,
   const context = await gateway.call('read_selection', {})
   expect(context.selection).toBeNull()
   expect(context.annotations[0].target.text).toContain('Good spaces.')
-  await gateway.call('bash', replaceCopy('A new page', 'Another idea'))
+  await gateway.call('edit_html', replaceCopy('A new page', 'Another idea'))
   await expect(preview.getByRole('heading')).toHaveText('Another idea')
 })
 
@@ -464,7 +379,7 @@ test('the sidebar creates independent designs and reopens the last one after ref
   await expect(
     page.getByRole('button', { name: 'Mute microphone', exact: true }),
   ).toBeVisible()
-  await gateway.call('bash', replaceCopy('Good spaces.', 'First design.'))
+  await gateway.call('edit_html', replaceCopy('Good spaces.', 'First design.'))
   const preview = page.frameLocator('iframe[title="Website preview"]')
   await expect(preview.getByRole('heading', { level: 1 })).toContainText(
     'First design.',

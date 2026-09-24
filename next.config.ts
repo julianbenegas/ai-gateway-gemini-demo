@@ -1,14 +1,8 @@
 import type { NextConfig } from 'next'
 
 const config: NextConfig = {
-  serverExternalPackages: ['just-bash'],
-  outputFileTracingIncludes: {
-    '/api/v2/bash': [
-      './scripts/v2-bash-worker.mjs',
-      './src/lib/v2/filesystem.mjs',
-      './node_modules/just-bash/**/*',
-    ],
-  },
+  // Browser tests run their own dev server beside yours; see playwright.config.ts.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   async headers() {
     return [
       {

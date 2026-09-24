@@ -5,7 +5,7 @@ export default defineConfig({
   fullyParallel: true,
   timeout: 35000,
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: 'http://localhost:3100',
     viewport: { width: 1440, height: 960 },
     launchOptions: {
       args: [
@@ -17,8 +17,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'npm run dev -- --port 3000',
-    url: 'http://localhost:3000',
-    reuseExistingServer: true,
+    // A dedicated server whose boards live in memory, never in real Redis.
+    command:
+      'NEXT_DIST_DIR=.next-test MARGIN_STORE=memory pnpm dev --port 3100',
+    url: 'http://localhost:3100',
+    reuseExistingServer: false,
   },
 })

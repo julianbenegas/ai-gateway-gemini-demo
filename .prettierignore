@@ -1,0 +1,4 @@
+pnpm-lock.yaml
+.logs
+next-env.d.ts
+.next-test

@@ -1,4 +1,4 @@
-import { listDesigns, workspaceFailure } from '@/lib/v2/workspace'
+import { listDesigns, studioFailure } from '@/studio/server/store'
 
 export async function GET() {
   try {
@@ -6,6 +6,6 @@ export async function GET() {
       headers: { 'Cache-Control': 'no-store' },
     })
   } catch (error) {
-    return workspaceFailure(error)
+    return studioFailure(error)
   }
 }

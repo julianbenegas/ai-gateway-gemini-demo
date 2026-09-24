@@ -1,39 +1,16 @@
-import { gateway } from '@ai-sdk/gateway'
-import { experimental_getRealtimeToolDefinitions } from 'ai'
-import { LIVE_MODEL } from '@/lib/config'
-import { checkOrigin, gatewayError } from '@/lib/server'
-import { siteTools } from '@/lib/v2/tools'
-import {
-  listDesigns,
-  WorkspaceError,
-  workspaceFailure,
-} from '@/lib/v2/workspace'
-
-export const maxDuration = 60
+import { checkOrigin } from '@/lib/server'
+import { listDesigns, StudioError, studioFailure } from '@/studio/server/store'
+import { siteTools } from '@/studio/tools'
+import { realtimeToken } from '@/voice/token'
 
 export async function POST(request: Request) {
   if (!checkOrigin(request))
     return Response.json({ error: 'Invalid request origin' }, { status: 403 })
   try {
     if (!(await listDesigns()).length)
-      throw new WorkspaceError('Create a design to start voice.', 401)
-    const [credentials, tools] = await Promise.all([
-      gateway.experimental_realtime.getToken({
-        model: LIVE_MODEL,
-        expiresAfterSeconds: 60,
-      }),
-      experimental_getRealtimeToolDefinitions({ tools: siteTools }),
-    ])
-    return Response.json(
-      { ...credentials, tools },
-      { headers: { 'Cache-Control': 'no-store' } },
-    )
+      throw new StudioError('Create a design to start voice.', 401)
   } catch (error) {
-    if (error instanceof WorkspaceError) return workspaceFailure(error)
-    console.error(
-      'V2 voice setup failed:',
-      error instanceof Error ? error.message : 'Unknown error',
-    )
-    return Response.json({ error: gatewayError(error) }, { status: 503 })
+    return studioFailure(error)
   }
+  return realtimeToken(siteTools)
 }

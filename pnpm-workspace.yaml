@@ -1,0 +1,2 @@
+# Mirrors npm's `min-release-age=2` from ~/.npmrc, which pnpm does not read.
+minimumReleaseAge: 2880

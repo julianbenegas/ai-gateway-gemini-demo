@@ -1,38 +1,37 @@
 import { checkOrigin } from '@/lib/server'
 import {
-  getWorkspace,
+  createDesign,
+  editSite,
   readSite,
-  startWorkspace,
-  workspaceFailure,
-} from '@/lib/v2/workspace'
+  studioFailure,
+} from '@/studio/server/store'
 
-export const maxDuration = 60
+const noStore = { headers: { 'Cache-Control': 'no-store' } }
+const forbidden = () =>
+  Response.json({ error: 'Invalid request origin' }, { status: 403 })
 
 export async function GET(request: Request) {
   try {
-    return Response.json(
-      await readSite(
-        new URL(request.url).searchParams.has('designId')
-          ? await getWorkspace(request)
-          : undefined,
-      ),
-      {
-        headers: { 'Cache-Control': 'no-store' },
-      },
-    )
+    return Response.json(await readSite(request), noStore)
   } catch (error) {
-    return workspaceFailure(error)
+    return studioFailure(error)
   }
 }
 
 export async function POST(request: Request) {
-  if (!checkOrigin(request))
-    return Response.json({ error: 'Invalid request origin' }, { status: 403 })
+  if (!checkOrigin(request)) return forbidden()
   try {
-    return Response.json(await readSite(await startWorkspace()), {
-      headers: { 'Cache-Control': 'no-store' },
-    })
+    return Response.json(await createDesign(), noStore)
   } catch (error) {
-    return workspaceFailure(error)
+    return studioFailure(error)
+  }
+}
+
+export async function PATCH(request: Request) {
+  if (!checkOrigin(request)) return forbidden()
+  try {
+    return Response.json(await editSite(request), noStore)
+  } catch (error) {
+    return studioFailure(error)
   }
 }

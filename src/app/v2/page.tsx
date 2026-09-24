@@ -1,12 +1,11 @@
 import type { Metadata } from 'next'
-import { SiteStudio } from '@/components/v2/site-studio'
-import './v2.css'
+import { cookies } from 'next/headers'
+import { Studio } from '@/studio/studio'
+import { clampSidebar, sidebarCookie } from '@/ui/sidebar'
 
-export const metadata: Metadata = {
-  title: 'Margin — Speak your changes',
-  description: 'Point at a website, talk, and change its real source.',
-}
+export const metadata: Metadata = { title: 'Margin / v2' }
 
-export default function Page() {
-  return <SiteStudio />
+export default async function Page() {
+  const width = (await cookies()).get(sidebarCookie.studio)?.value
+  return <Studio sidebarWidth={clampSidebar(Number(width))} />
 }

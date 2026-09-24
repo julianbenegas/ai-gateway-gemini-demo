@@ -7,3 +7,6 @@ test-results/
 playwright-report/
 public/tldraw/
 public/vendor/
+.vercel
+.next-test/
+next-env.d.ts

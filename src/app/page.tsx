@@ -1,11 +1,16 @@
-'use client'
+import { cookies } from 'next/headers'
+import { loadBoard } from '@/canvas/server/board'
+import { Workspace } from '@/canvas/workspace'
+import { clampSidebar, sidebarCookie } from '@/ui/sidebar'
 
-import dynamic from 'next/dynamic'
-
-const Workspace = dynamic(() => import('@/components/workspace'), {
-  ssr: false,
-})
-
-export default function Page() {
-  return <Workspace />
+export default async function Page() {
+  const [snapshot, cookieStore] = await Promise.all([loadBoard(), cookies()])
+  return (
+    <Workspace
+      snapshot={snapshot}
+      sidebarWidth={clampSidebar(
+        Number(cookieStore.get(sidebarCookie.canvas)?.value),
+      )}
+    />
+  )
 }
