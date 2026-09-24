@@ -1,11 +1,11 @@
 # Margin
 
-Voice-first website design with Gemini 3.8 Live through AI Gateway. Two surfaces:
+Voice-first website design with Gemini 3.8 Live through AI Gateway. Each example is a self-contained route, with its own UI, API, auth, and agent loop:
 
-- **`/` — canvas.** A tldraw board where websites are shapes. The agent reads the board, edits HTML, and draws with native tldraw shapes. The board is saved to Redis and rendered on the server.
+- **`/v1` — canvas.** A tldraw board where websites are shapes. The agent reads the board, edits HTML, and draws with native tldraw shapes. The board is saved to Redis and rendered on the server.
 - **`/v2` — studio.** A single website you point at, draw on, and annotate. The agent edits its `index.html`.
 
-Voice is the only way to talk to the agent. There is no chat.
+`/` redirects to `/v1`. Voice is the only way to talk to the agent. There is no chat.
 
 ## Run
 
@@ -27,18 +27,25 @@ A shell-level `AI_GATEWAY_API_KEY` overrides `.env.local`, so unset it if the de
 
 ```
 src/
-  app/        routes and API handlers only
-  canvas/     "/" — server-rendered shell, client-only tldraw editor, website shape, tools and agent
-  canvas/server/  Redis-backed board store
-  studio/     "/v2" — studio UI, preview bridge client, tools
-  studio/server/  Redis-backed design store
-  voice/      realtime hook, voice controls, session config, token minting
-  ui/         shared primitives (button, dialog, notice, labels)
-  lib/        cross-cutting helpers (CSP, replacements, config)
-public/studio-bridge.js   selection and annotation script injected into the studio iframe
+  app/
+    v1/                  canvas example
+      page.tsx           Server Component: loads the board, renders the shell
+      api/[[...path]]/   mounts the example's Elysia API
+      _server/           auth (owner cookie), Redis store, Elysia API
+      _lib/              tools, agent, voice loop, typed API client
+      _components/       workspace, tldraw editor, website shape, menus
+    v2/                  studio example, same shape
+  ui/                    pure UI components shared by the examples
+  lib/                   shared libraries: Elysia defaults, RPC client, Redis,
+                         owner cookie, realtime token, CSP, replacements
+public/v2/preview-bridge.js   selection and annotation script injected into the studio iframe
 ```
 
-Styling is Tailwind 4 with tokens in `src/app/globals.css`: Geist Mono and the forums.basehub.com palette, including its orange accent, following the system color scheme. tldraw draws its selection overlays from a JS theme, so `canvas/workspace.tsx` mirrors the accent there. Sidebars are resizable and remember their width per browser.
+Everything specific to an example lives in its folder, including the voice loop (`_lib/use-voice-agent.ts`), so examples can diverge freely. Underscore folders are private in the App Router and never become routes.
+
+**API.** Each example's `_server/api.ts` is an Elysia app mounted at `/<example>/api`, validated with the same zod schemas the tools use. The browser calls it through Eden (`_lib/rpc.ts`), so requests and responses are typed end to end. `lib/api.ts` rejects cross-origin writes and maps errors to `{ error }` responses. Declare route handlers `async`; Elysia only catches rejected promises from async functions.
+
+Styling is Tailwind 4 with tokens in `src/app/globals.css`: Geist Mono and the forums.basehub.com palette, including its orange accent, following the system color scheme. tldraw draws its selection overlays from a JS theme, so `v1/_components/canvas-editor.tsx` mirrors the accent there. Sidebars are resizable; their width is kept in a cookie so the server renders it.
 
 ## Agent tools
 
@@ -48,7 +55,7 @@ Nothing is injected into the conversation; the agent pulls context through tools
 
 **Studio:** `read_selection` (DOM selection, notes, and drawings anchored to elements), `read_html`, `edit_html` (literal search/replace), `write_html` (full rewrite).
 
-Edits are validated and last-write-wins. Canvas edits are undoable through tldraw. The canvas saves the whole tldraw snapshot to Redis shortly after each change; the page loads it in a Server Component, so the sidebar, header, and saved sidebar width render before tldraw loads and nothing shifts. Studio designs are one Redis hash each, with separate `html` and `annotations` fields, so a saved note never overwrites a concurrent page edit. Each edit re-adds missing `data-margin-id` attributes so annotations stay attached. An `HttpOnly` cookie scopes boards and designs to the browser; this is a demo, not an account system.
+Edits are validated and last-write-wins. Canvas edits are undoable through tldraw. The canvas saves the whole tldraw snapshot to Redis shortly after each change; the page loads it in a Server Component, so the sidebar, header, and saved sidebar width render before tldraw loads and nothing shifts. Studio designs are one Redis hash each, with separate `html` and `annotations` fields, so a saved note never overwrites a concurrent page edit. Each edit re-adds missing `data-margin-id` attributes so annotations stay attached. Each example scopes its data to the browser with its own `HttpOnly` owner cookie; this is a demo, not an account system.
 
 Websites render in `sandbox="allow-scripts"` iframes, with a CSP that blocks network access and only allows this origin's scripts.
 

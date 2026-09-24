@@ -1,54 +1,52 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mockGateway } from './gateway'
 import { applyReplacements } from '../../src/lib/replacements'
-import { prepareHtml } from '../../src/studio/server/html'
-import type { Design, SiteDocument } from '../../src/studio/types'
+import type { Design, SiteDocument } from '../../src/app/v2/_lib/types'
+import { prepareHtml } from '../../src/app/v2/_server/html'
 
 async function mockFiles(page: Page) {
   const initial = (await (
-    await page.request.get('/api/v2/site')
+    await page.request.get('/v2/api/starter')
   ).json()) as SiteDocument
   let site = initial
   let created = 0
   const sites = new Map<string, SiteDocument>()
   const designs: Design[] = []
-  await page.route('**/api/v2/designs', (route) =>
-    route.fulfill({ json: designs }),
-  )
-  await page.route('**/api/v2/site**', async (route) => {
-    const id = new URL(route.request().url()).searchParams.get('designId')
-    if (route.request().method() === 'PATCH') {
-      site = sites.get(id!)!
-      const edit = route.request().postDataJSON()
-      const result =
-        'html' in edit
-          ? { html: edit.html, matches: undefined }
-          : applyReplacements(site.html, edit.replacements)
-      site.html = prepareHtml(result.html)
-      return route.fulfill({
-        json: {
-          site,
-          matches: result.matches,
-          missed: !!result.matches?.includes(0),
-        },
-      })
-    }
-    if (route.request().method() === 'POST') {
-      const id = crypto.randomUUID()
-      site = { ...initial, id, persisted: true, annotations: [] }
-      sites.set(id, site)
-      designs.push({ id, name: `Design ${++created}`, createdAt: Date.now() })
-    } else site = id ? sites.get(id)! : initial
+  const designId = (url: string) => new URL(url).pathname.split('/')[4]
+  await page.route('**/v2/api/designs', async (route) => {
+    if (route.request().method() !== 'POST')
+      return route.fulfill({ json: designs })
+    const id = crypto.randomUUID()
+    site = { ...initial, id, persisted: true, annotations: [] }
+    sites.set(id, site)
+    designs.push({ id, name: `Design ${++created}`, createdAt: Date.now() })
     await route.fulfill({ json: site })
   })
-  await page.route('**/api/v2/annotations**', async (route) => {
-    const id = new URL(route.request().url()).searchParams.get('designId')!
-    site = sites.get(id)!
-    const data = route.request().postDataJSON()
+  await page.route('**/v2/api/designs/*', async (route) => {
+    site = sites.get(designId(route.request().url()))!
+    if (route.request().method() !== 'PATCH')
+      return route.fulfill({ json: site })
+    const edit = route.request().postDataJSON()
+    const result =
+      'html' in edit
+        ? { html: edit.html, matches: undefined }
+        : applyReplacements(site.html, edit.replacements)
+    site.html = prepareHtml(result.html)
+    await route.fulfill({
+      json: {
+        site,
+        matches: result.matches,
+        missed: !!result.matches?.includes(0),
+      },
+    })
+  })
+  await page.route('**/v2/api/designs/*/annotations**', async (route) => {
+    const { pathname } = new URL(route.request().url())
+    site = sites.get(pathname.split('/')[4])!
     site.annotations =
       route.request().method() === 'DELETE'
-        ? site.annotations.filter((note) => note.id !== data.id)
-        : [...site.annotations, data as SiteDocument['annotations'][number]]
+        ? site.annotations.filter((note) => note.id !== pathname.split('/')[6])
+        : [...site.annotations, route.request().postDataJSON()]
     await route.fulfill({ json: site.annotations })
   })
   return {
@@ -84,7 +82,7 @@ test('freehand drawings stay anchored, persist, and give the agent DOM context o
   page,
 }) => {
   const files = await mockFiles(page)
-  const gateway = await mockGateway(page, '**/api/v2/realtime')
+  const gateway = await mockGateway(page, '**/v2/api/realtime')
   await page.goto('/v2')
   await page.getByRole('button', { name: 'Draw on the website' }).click()
   await drawOnHeading(page)
@@ -155,7 +153,7 @@ test('freehand drawings stay anchored, persist, and give the agent DOM context o
 test('failed drawing saves retain the stroke for retry', async ({ page }) => {
   const files = await mockFiles(page)
   let fail = true
-  await page.route('**/api/v2/annotations**', async (route) => {
+  await page.route('**/v2/api/designs/*/annotations**', async (route) => {
     if (!fail) return route.fallback()
     await route.fulfill({ status: 503, json: { error: 'Test save failure' } })
   })
@@ -180,28 +178,25 @@ test('v2 owns its session before exposing remote file and voice tools', async ({
   baseURL,
 }) => {
   const headers = { Origin: new URL(baseURL!).origin }
-  const initial = await request.get('/api/v2/site')
+  const initial = await request.get('/v2/api/starter')
   expect(initial.status()).toBe(200)
   expect((await initial.json()).persisted).toBe(false)
   const designId = crypto.randomUUID()
-  const write = await request.patch(`/api/v2/site?designId=${designId}`, {
+  const write = await request.patch(`/v2/api/designs/${designId}`, {
     headers,
     data: { html: '<h1>Mine</h1>' },
   })
   expect(write.status()).toBe(401)
-  const voice = await request.post('/api/v2/realtime', { headers })
+  const voice = await request.post('/v2/api/realtime', { headers })
   expect(voice.status()).toBe(401)
-  const foreign = await request.post('/api/v2/site', {
+  const foreign = await request.post('/v2/api/designs', {
     headers: { Origin: 'https://another.example' },
   })
   expect(foreign.status()).toBe(403)
-  const foreignWrite = await request.patch(
-    `/api/v2/site?designId=${designId}`,
-    {
-      headers: { Origin: 'https://another.example' },
-      data: { html: '<h1>Mine</h1>' },
-    },
-  )
+  const foreignWrite = await request.patch(`/v2/api/designs/${designId}`, {
+    headers: { Origin: 'https://another.example' },
+    data: { html: '<h1>Mine</h1>' },
+  })
   expect(foreignWrite.status()).toBe(403)
 })
 
@@ -209,7 +204,7 @@ test('one click starts voice, notes target DOM elements, and edits reload from t
   page,
 }) => {
   const files = await mockFiles(page)
-  const gateway = await mockGateway(page, '**/api/v2/realtime')
+  const gateway = await mockGateway(page, '**/v2/api/realtime')
   await page.goto('/v2')
   const preview = page.frameLocator('iframe[title="Website preview"]')
   await expect(preview.getByRole('heading', { level: 1 })).toContainText(
@@ -294,7 +289,7 @@ test('a deleted target stays identifiable in its note without blocking further e
   page,
 }) => {
   await mockFiles(page)
-  const gateway = await mockGateway(page, '**/api/v2/realtime')
+  const gateway = await mockGateway(page, '**/v2/api/realtime')
   await page.goto('/v2')
   await page
     .getByRole('button', { name: 'Talk and annotate', exact: true })
@@ -337,9 +332,9 @@ test('cancelling remote setup prevents a late voice connection', async ({
   page,
 }) => {
   const files = await mockFiles(page)
-  const gateway = await mockGateway(page, '**/api/v2/realtime')
+  const gateway = await mockGateway(page, '**/v2/api/realtime')
   let finish: (() => Promise<void>) | undefined
-  await page.route('**/api/v2/site**', async (route) => {
+  await page.route('**/v2/api/designs', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     await new Promise<void>((resolve) => {
       finish = async () => {
@@ -367,7 +362,7 @@ test('the sidebar creates independent designs and reopens the last one after ref
   page,
 }) => {
   await mockFiles(page)
-  const gateway = await mockGateway(page, '**/api/v2/realtime')
+  const gateway = await mockGateway(page, '**/v2/api/realtime')
   await page.goto('/v2')
   await page.getByRole('button', { name: 'New design', exact: true }).click()
   await expect(

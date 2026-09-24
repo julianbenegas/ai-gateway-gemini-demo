@@ -9,6 +9,6 @@ export const clampSidebar = (width: number) =>
     : SIDEBAR_DEFAULT
 
 export const sidebarCookie = {
-  canvas: 'margin_canvas_sidebar',
-  studio: 'margin_studio_sidebar',
+  v1: 'margin_v1_sidebar',
+  v2: 'margin_v2_sidebar',
 } as const

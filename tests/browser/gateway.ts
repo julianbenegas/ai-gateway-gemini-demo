@@ -1,6 +1,6 @@
 import { expect, type Page, type WebSocketRoute } from '@playwright/test'
 
-export async function mockGateway(page: Page, endpoint = '**/api/realtime') {
+export async function mockGateway(page: Page, endpoint = '**/v1/api/realtime') {
   let socket: WebSocketRoute
   const outputs = new Map<string, unknown>()
   const sent: Record<string, unknown>[] = []
