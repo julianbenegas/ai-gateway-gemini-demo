@@ -3,8 +3,12 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { PanelLeft } from 'lucide-react'
-import type { ThinkingLevel } from '@/lib/models'
-import { preferenceCookie } from '@/lib/preferences'
+import {
+  type CodingThinkingLevel,
+  codingThinkingLevels,
+  type ThinkingLevel,
+} from '@/lib/models'
+import { preferenceCookie, writePreference } from '@/lib/preferences'
 import { Brand } from '@/ui/brand'
 import { IconButton } from '@/ui/button'
 import { ConfirmDialog } from '@/ui/dialog'
@@ -24,11 +28,13 @@ export function Workspace({
   appId,
   sidebarWidth: initialWidth,
   thinking,
+  agentThinking: initialAgentThinking,
 }: {
   apps: App[]
   appId: string | null
   sidebarWidth: number
   thinking: ThinkingLevel
+  agentThinking: CodingThinkingLevel
 }) {
   const router = useRouter()
   const [apps, setApps] = useState(initialApps)
@@ -38,6 +44,16 @@ export function Workspace({
     initial: initialWidth,
   })
   const [deleting, setDeleting] = useState<App | null>(null)
+  const [agentThinking, setAgentThinking] = useState(initialAgentThinking)
+  const cycleAgentThinking = () => {
+    const next =
+      codingThinkingLevels[
+        (codingThinkingLevels.indexOf(agentThinking) + 1) %
+          codingThinkingLevels.length
+      ]
+    writePreference({ cookie: preferenceCookie.v3.agentThinking, value: next })
+    setAgentThinking(next)
+  }
   const current = apps.find((app) => app.id === appId)
 
   const renameApp = async ({ id, name }: { id: string; name: string }) => {
@@ -87,7 +103,16 @@ export function Workspace({
       <div className="col-start-2 row-start-2 grid min-h-0 grid-cols-[minmax(320px,9fr)_11fr] max-lg:grid-cols-1 max-lg:grid-rows-[1fr_1fr]">
         {appId ? (
           <>
-            <Chat toolbar={<VoiceBar appId={appId} thinking={thinking} />} />
+            <Chat
+              thinking={{ level: agentThinking, cycle: cycleAgentThinking }}
+              toolbar={
+                <VoiceBar
+                  appId={appId}
+                  thinking={thinking}
+                  agentThinking={agentThinking}
+                />
+              }
+            />
             <DesktopView appId={appId} />
           </>
         ) : (

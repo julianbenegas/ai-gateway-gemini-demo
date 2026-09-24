@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { ThinkingLevel } from '@/lib/models'
+import type { CodingThinkingLevel, ThinkingLevel } from '@/lib/models'
 import { preferenceCookie } from '@/lib/preferences'
 import { Notice } from '@/ui/notice'
 import { toolLabels, Transcript } from '@/ui/transcript'
@@ -15,16 +15,19 @@ const labels = toolLabels(voiceTools)
 export function VoiceBar({
   appId,
   thinking,
+  agentThinking,
 }: {
   appId: string
   thinking: ThinkingLevel
+  /** The agent's thinking level for delegated tasks. */
+  agentThinking: CodingThinkingLevel
 }) {
   const voice = useVoiceAgent({
     tokenEndpoint: '/v3/api/realtime',
     configuration: voiceConfiguration,
     thinking: { initial: thinking, cookie: preferenceCookie.v3.thinking },
     tools: voiceTools,
-    context: { appId },
+    context: { appId, agentThinking },
   })
   const [transcriptOpen, setTranscriptOpen] = useState(false)
   return (

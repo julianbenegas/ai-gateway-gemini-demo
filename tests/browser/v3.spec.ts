@@ -1,10 +1,15 @@
 import { expect, type Page, test } from '@playwright/test'
+import { mockGateway } from './gateway'
 
-// The desktop is a real Vercel Sandbox; these tests stand in a blank page.
+// The desktop is a real Vercel Sandbox; these tests point its viewer at a
+// socket that refuses, and count how often it asks for the desktop.
 async function stubDesktop(page: Page) {
-  await page.route('**/v3/api/apps/*/desktop', (route) =>
-    route.fulfill({ json: { url: 'about:blank' } }),
-  )
+  const calls = { count: 0 }
+  await page.route('**/v3/api/apps/*/desktop', (route) => {
+    calls.count++
+    return route.fulfill({ json: { url: 'ws://127.0.0.1:9/websockify' } })
+  })
+  return calls
 }
 
 async function createApp(page: Page) {
@@ -29,9 +34,8 @@ test('apps start empty, open by URL beside their desktop, rename, and delete', a
   await expect(page.getByRole('region', { name: 'Chat' })).toContainText(
     'Ask the agent to build something.',
   )
-  await expect(page.locator('iframe[title="Desktop"]')).toHaveAttribute(
-    'src',
-    'about:blank',
+  await expect(page.getByRole('region', { name: 'Desktop' })).toContainText(
+    /Starting the desktop|Reconnecting to the desktop/,
   )
   await expect(
     page.getByRole('button', { name: 'Voice mode', exact: true }),
@@ -87,4 +91,65 @@ test("the agent's event stream only opens the owner's apps", async ({
     data: { sessionId: id, events: [] },
   })
   expect(push.status()).toBe(403)
+})
+
+test('the composer shows the model, cycles its thinking level, and remembers it', async ({
+  page,
+}) => {
+  await stubDesktop(page)
+  await page.goto('/v3')
+  await createApp(page)
+  const composer = page.getByRole('region', { name: 'Chat' })
+  await expect(composer).toContainText('Gemini 3.8 Flash')
+  const thinking = composer.getByRole('button', { name: /^Agent thinking: / })
+  await expect(thinking).toHaveAccessibleName('Agent thinking: medium')
+  await thinking.click()
+  await expect(thinking).toHaveAccessibleName('Agent thinking: high')
+  await thinking.click()
+  await expect(thinking).toHaveAccessibleName('Agent thinking: low')
+  await page.reload()
+  await expect(thinking).toHaveAccessibleName('Agent thinking: low')
+  await expect(composer.getByRole('button', { name: 'Send' })).toBeDisabled()
+  await composer.getByRole('textbox', { name: 'Message' }).fill('Hi')
+  await expect(composer.getByRole('button', { name: 'Send' })).toBeEnabled()
+})
+
+test('the desktop viewer keeps retrying when the connection fails', async ({
+  page,
+}) => {
+  const desktop = await stubDesktop(page)
+  await page.goto('/v3')
+  await createApp(page)
+  await expect(page.getByRole('region', { name: 'Desktop' })).toHaveAttribute(
+    'data-status',
+    'reconnecting',
+  )
+  // Each retry asks the server again, which resumes a stopped desktop.
+  await expect.poll(() => desktop.count, { timeout: 15000 }).toBeGreaterThan(2)
+})
+
+test('voice mode can read what the agent is doing', async ({ page }) => {
+  await stubDesktop(page)
+  const gateway = await mockGateway(page, '**/v3/api/realtime**')
+  await page.goto('/v3')
+  await createApp(page)
+  await page.getByRole('button', { name: 'Voice mode', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Mute microphone', exact: true }),
+  ).toBeVisible()
+  const session = gateway.sent.find((event) => event.type === 'session-update')!
+    .config as any
+  expect(session.tools.map((tool: { name: string }) => tool.name)).toEqual([
+    'delegate',
+    'agent_status',
+  ])
+  expect(session.providerOptions.google).not.toHaveProperty('thinkingConfig')
+  expect(await gateway.call('agent_status', {})).toEqual({
+    working: false,
+    currentTask: null,
+    stepsSoFar: 0,
+    latestSteps: [],
+    queuedTasks: 0,
+    lastReply: null,
+  })
 })

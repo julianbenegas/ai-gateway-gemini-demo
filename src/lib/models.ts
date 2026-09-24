@@ -4,6 +4,10 @@ export const LIVE_THINKING_MODEL = 'google/gemini-3.8-live-extended-thinking'
 export const VISION_MODEL = 'google/gemini-3.8-flash'
 /** The strongest Gemini 3.8 text model on Gateway; v3's coding agent. */
 export const CODING_MODEL = 'google/gemini-3.8-flash'
+export const CODING_MODEL_NAME = 'Gemini 3.8 Flash'
+/** The thinking levels it accepts through Gateway; it rejects `minimal`. */
+export const codingThinkingLevels = ['low', 'medium', 'high'] as const
+export type CodingThinkingLevel = (typeof codingThinkingLevels)[number]
 
 /** `none` uses the regular model; the rest, extended thinking at that level. */
 export const thinkingLevels = ['none', 'low', 'medium', 'high'] as const

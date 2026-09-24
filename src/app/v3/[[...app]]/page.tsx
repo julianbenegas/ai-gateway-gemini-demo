@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
 import { z } from 'zod'
+import { codingThinkingLevels } from '@/lib/models'
 import { preferenceCookie, readThinkingLevel } from '@/lib/preferences'
 import { clampSidebar } from '@/ui/sidebar'
 import { Workspace } from '../_components/workspace'
@@ -33,6 +34,11 @@ export default async function Page({
       cookieStore.get(preferenceCookie.v3.thinking)?.value,
       'none',
     ),
+    agentThinking:
+      codingThinkingLevels.find(
+        (level) =>
+          level === cookieStore.get(preferenceCookie.v3.agentThinking)?.value,
+      ) ?? 'medium',
   }
   const apps = await listApps({ owner: current })
   if (!path.length) {

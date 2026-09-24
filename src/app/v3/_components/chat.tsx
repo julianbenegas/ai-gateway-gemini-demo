@@ -1,17 +1,27 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Asterisk, LoaderCircle, Mic, Square } from 'lucide-react'
+import { Asterisk, LoaderCircle, Mic } from 'lucide-react'
 import { inputs } from 'experimental-a2/ai'
-import { IconButton } from '@/ui/button'
+import { CODING_MODEL_NAME, type CodingThinkingLevel } from '@/lib/models'
+import { Button } from '@/ui/button'
 import { cx } from '@/ui/cx'
+import { GeminiIcon } from '@/ui/gemini-icon'
+import { ScrollArea } from '@/ui/scroll-area'
 import { type AppMessage, toolLabels } from '../_lib/agent'
 import { useSession } from '../_lib/session'
 
 type Part = AppMessage['parts'][number]
 
 /** The coding agent's conversation, in the transcript's style but wide. */
-export function Chat({ toolbar }: { toolbar?: React.ReactNode }) {
+export function Chat({
+  toolbar,
+  thinking,
+}: {
+  toolbar?: React.ReactNode
+  /** The agent's thinking level for new requests. */
+  thinking: { level: CodingThinkingLevel; cycle: () => void }
+}) {
   const { state, push } = useSession()
   const [error, setError] = useState<string | null>(null)
   const end = useRef<HTMLLIElement>(null)
@@ -34,6 +44,7 @@ export function Chat({ toolbar }: { toolbar?: React.ReactNode }) {
           id: crypto.randomUUID(),
           role: 'user',
           parts: [{ type: 'text', text }],
+          metadata: { thinking: thinking.level },
         }),
       )
     } catch (cause) {
@@ -51,41 +62,48 @@ export function Chat({ toolbar }: { toolbar?: React.ReactNode }) {
         <span className="text-xs font-medium text-faint uppercase">Agent</span>
         {toolbar}
       </div>
-      <ol className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-5 py-4">
-        {!state.messages.length && (
-          <li className="m-auto max-w-72 text-center text-faint">
-            Ask the agent to build something. It codes in the terminal and
-            checks its work on the screen.
-          </li>
-        )}
-        {state.messages.flatMap((message) =>
-          message.parts.map((part, index) => (
-            <MessagePart
-              key={`${message.id}:${index}`}
-              message={message}
-              part={part}
-            />
-          )),
-        )}
-        {waiting && (
-          <li className="flex items-center gap-1.5 text-faint">
-            <LoaderCircle size={12} className="animate-spin" />
-            Thinking
-          </li>
-        )}
-        {state.error && (
-          <li role="alert" className="text-danger">
-            {state.error}
-          </li>
-        )}
-        <li ref={end} aria-hidden />
-      </ol>
+      <ScrollArea label="Conversation" className="flex-1">
+        <ol className="flex min-h-full flex-col gap-3 px-5 py-4">
+          {!state.messages.length && (
+            <li className="m-auto max-w-72 text-center text-faint">
+              Ask the agent to build something. It codes in the terminal and
+              checks its work on the screen.
+            </li>
+          )}
+          {state.messages.flatMap((message) =>
+            message.parts.map((part, index) => (
+              <MessagePart
+                key={`${message.id}:${index}`}
+                message={message}
+                part={part}
+              />
+            )),
+          )}
+          {waiting && (
+            <li className="flex items-center gap-1.5 text-faint">
+              <LoaderCircle size={12} className="animate-spin" />
+              Thinking
+            </li>
+          )}
+          {state.error && (
+            <li role="alert" className="text-danger">
+              {state.error}
+            </li>
+          )}
+          <li ref={end} aria-hidden />
+        </ol>
+      </ScrollArea>
       {error && (
         <p role="alert" className="px-5 pb-2 text-danger">
           {error}
         </p>
       )}
-      <Composer onSend={send} onStop={working ? stop : null} queued={queued} />
+      <Composer
+        onSend={send}
+        onStop={working ? stop : null}
+        queued={queued}
+        thinking={thinking}
+      />
     </section>
   )
 }
@@ -149,19 +167,30 @@ function MessagePart({ message, part }: { message: AppMessage; part: Part }) {
   )
 }
 
+/** A composer after forums.basehub.com: a dotted frame, then the model. */
 function Composer({
   onSend,
   onStop,
   queued,
+  thinking,
 }: {
   onSend: (text: string) => Promise<void>
   onStop: (() => void) | null
   queued: number
+  thinking: { level: CodingThinkingLevel; cycle: () => void }
 }) {
   const [text, setText] = useState('')
+  const input = useRef<HTMLTextAreaElement>(null)
+  // Grows with its text, up to a point, then scrolls.
+  useEffect(() => {
+    const textarea = input.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 208)}px`
+  }, [text])
   return (
     <form
-      className="flex shrink-0 items-end gap-1 p-3 pt-0"
+      className="group m-3 mt-1 flex shrink-0 flex-col bg-shade/10 outline-2 -outline-offset-1 outline-muted/50 outline-dotted focus-within:bg-shade/30 focus-within:outline-dashed"
       onSubmit={async (event) => {
         event.preventDefault()
         const message = text.trim()
@@ -171,6 +200,7 @@ function Composer({
       }}
     >
       <textarea
+        ref={input}
         aria-label="Message"
         value={text}
         rows={2}
@@ -181,26 +211,48 @@ function Composer({
             event.currentTarget.form?.requestSubmit()
           }
         }}
-        placeholder={
-          queued
-            ? `${queued} queued; runs after this turn`
-            : 'Message the agent'
-        }
-        className="min-h-9 min-w-0 flex-1 resize-none bg-accent/5 px-2.5 py-2 text-accent outline-1 -outline-offset-1 outline-accent/40 outline-dotted placeholder:text-accent/50 focus:outline-2 focus:outline-accent focus:outline-dashed"
+        placeholder="Ask the agent to build something"
+        className="min-h-16 w-full resize-none bg-transparent p-3 pb-1 text-dim outline-none placeholder:text-faint"
       />
-      {onStop && (
-        <IconButton label="Stop" variant="danger" onClick={onStop}>
-          <Square size={13} />
-        </IconButton>
-      )}
-      <IconButton
-        label="Send message"
-        type="submit"
-        variant="accent"
-        disabled={!text.trim()}
+      <div
+        className="flex cursor-text items-center justify-between gap-3 p-3 pt-1"
+        onClick={(event) => {
+          if (!(event.target as Element).closest('button'))
+            input.current?.focus()
+        }}
       >
-        <ArrowUp size={15} />
-      </IconButton>
+        <div className="flex min-w-0 items-center gap-3 text-faint">
+          <span
+            title="The coding agent's model"
+            className="flex min-w-0 items-center gap-1.5"
+          >
+            <GeminiIcon className="size-3.5 shrink-0" />
+            <span className="truncate">{CODING_MODEL_NAME}</span>
+          </span>
+          <button
+            type="button"
+            aria-label={`Agent thinking: ${thinking.level}`}
+            title="The agent's thinking level for new requests"
+            onClick={thinking.cycle}
+            className="shrink-0 hover:text-accent"
+          >
+            {thinking.level}
+          </button>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {!!queued && (
+            <span className="text-xs text-faint">{queued} queued</span>
+          )}
+          {onStop && (
+            <Button variant="ghost" onClick={onStop}>
+              Stop
+            </Button>
+          )}
+          <Button variant="primary" type="submit" disabled={!text.trim()}>
+            Send
+          </Button>
+        </div>
+      </div>
     </form>
   )
 }

@@ -6,7 +6,7 @@ import { thinkingLevels } from '@/lib/models'
 import { realtimeToken } from '@/lib/realtime'
 import { deleteApp, listApps, ownsApp, renameApp } from './apps'
 import { owner, requireOwner } from './auth'
-import { viewerUrl } from './desktop'
+import { desktopSocket } from './desktop'
 import { HttpError } from '@/lib/api'
 
 const app = z.object({ id: z.uuid() })
@@ -46,11 +46,11 @@ export const api = new Elysia({ prefix: '/v3/api' })
       deleteApp({ owner: await requireOwner(), id: params.id }),
     { params: app },
   )
-  // Boots or resumes the app's desktop and returns its viewer.
+  // Boots, resumes, or keeps alive the app's desktop; returns its socket.
   .post(
     '/apps/:id/desktop',
     async ({ params }) => ({
-      url: await viewerUrl({ appId: (await requireApp(params)).id }),
+      url: await desktopSocket({ appId: (await requireApp(params)).id }),
     }),
     { params: app },
   )

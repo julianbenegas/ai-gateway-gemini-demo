@@ -5,6 +5,7 @@ import { ArrowUp, Asterisk, LoaderCircle, X } from 'lucide-react'
 import type { UIMessage } from 'ai'
 import { IconButton } from './button'
 import { cx } from './cx'
+import { ScrollArea } from './scroll-area'
 
 /**
  * Voice messages as a small chat: speech, typed messages, and tool calls. The
@@ -50,68 +51,75 @@ export function Transcript({
           <X size={14} />
         </IconButton>
       </header>
-      <ol className="flex min-h-0 flex-col gap-2 overflow-auto p-3">
-        {!messages.length && <li className="text-faint">Nothing said yet.</li>}
-        {messages.flatMap((message, position) => [
-          sessionStarts.includes(position) && (
+      <ScrollArea label="Transcript messages" className="flex min-h-0 flex-col">
+        <ol className="flex flex-col gap-2 p-3">
+          {!messages.length && (
+            <li className="text-faint">Nothing said yet.</li>
+          )}
+          {messages.flatMap((message, position) => [
+            sessionStarts.includes(position) && (
+              <li
+                key={`session:${position}`}
+                data-session-divider
+                aria-label="New session"
+                className="my-1 dashed-line shrink-0"
+              />
+            ),
+            ...message.parts.map((part, index) => {
+              const key = `${message.id}:${index}`
+              if (part.type === 'text' && part.text.trim())
+                return (
+                  <li
+                    key={key}
+                    data-role={message.role}
+                    className={cx(
+                      'max-w-[85%] leading-relaxed',
+                      message.role === 'user'
+                        ? 'self-end bg-shade px-2.5 py-1.5 text-dim'
+                        : 'self-start text-muted',
+                    )}
+                  >
+                    {part.text}
+                  </li>
+                )
+              if (part.type === 'dynamic-tool')
+                return (
+                  <li
+                    key={key}
+                    className={cx(
+                      'flex items-center gap-1.5 self-start text-xs',
+                      part.state === 'output-error'
+                        ? 'text-danger'
+                        : 'text-faint',
+                    )}
+                  >
+                    {part.state === 'output-available' ||
+                    part.state === 'output-error' ? (
+                      <Asterisk size={12} className="shrink-0 text-accent" />
+                    ) : (
+                      <LoaderCircle
+                        size={12}
+                        className="shrink-0 animate-spin"
+                      />
+                    )}
+                    <span>{labels[part.toolName] ?? part.toolName}</span>
+                    <code className="text-faint/70">{part.toolName}</code>
+                  </li>
+                )
+              return null
+            }),
+          ])}
+          {/* A session that started after the last message, with nothing new yet. */}
+          {sessionStarts.includes(messages.length) && (
             <li
-              key={`session:${position}`}
               data-session-divider
               aria-label="New session"
               className="my-1 dashed-line shrink-0"
             />
-          ),
-          ...message.parts.map((part, index) => {
-            const key = `${message.id}:${index}`
-            if (part.type === 'text' && part.text.trim())
-              return (
-                <li
-                  key={key}
-                  data-role={message.role}
-                  className={cx(
-                    'max-w-[85%] leading-relaxed',
-                    message.role === 'user'
-                      ? 'self-end bg-shade px-2.5 py-1.5 text-dim'
-                      : 'self-start text-muted',
-                  )}
-                >
-                  {part.text}
-                </li>
-              )
-            if (part.type === 'dynamic-tool')
-              return (
-                <li
-                  key={key}
-                  className={cx(
-                    'flex items-center gap-1.5 self-start text-xs',
-                    part.state === 'output-error'
-                      ? 'text-danger'
-                      : 'text-faint',
-                  )}
-                >
-                  {part.state === 'output-available' ||
-                  part.state === 'output-error' ? (
-                    <Asterisk size={12} className="shrink-0 text-accent" />
-                  ) : (
-                    <LoaderCircle size={12} className="shrink-0 animate-spin" />
-                  )}
-                  <span>{labels[part.toolName] ?? part.toolName}</span>
-                  <code className="text-faint/70">{part.toolName}</code>
-                </li>
-              )
-            return null
-          }),
-        ])}
-        {/* A session that started after the last message, with nothing new yet. */}
-        {sessionStarts.includes(messages.length) && (
-          <li
-            data-session-divider
-            aria-label="New session"
-            className="my-1 dashed-line shrink-0"
-          />
-        )}
-        <li ref={end} aria-hidden />
-      </ol>
+          )}
+          <li ref={end} aria-hidden />
+        </ol>
+      </ScrollArea>
       <Composer onSend={onSend} />
     </section>
   )

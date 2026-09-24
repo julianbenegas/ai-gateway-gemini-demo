@@ -1,8 +1,15 @@
 import type { UIMessage } from 'ai'
 import { agent } from 'experimental-a2/ai'
+import type { CodingThinkingLevel } from '@/lib/models'
 
-/** A task from voice mode carries `via: 'voice'`. */
-export type AppMessage = UIMessage<{ via?: 'voice' }>
+/**
+ * A task from voice mode carries `via: 'voice'`; each request carries the
+ * thinking level the agent answers it with.
+ */
+export type AppMessage = UIMessage<{
+  via?: 'voice'
+  thinking?: CodingThinkingLevel
+}>
 
 /** The coding agent's contract, shared by the server and the browser. */
 export const appAgent = agent<AppMessage>({ name: 'margin-v3-app' })

@@ -1,5 +1,6 @@
 import 'server-only'
-import { tool } from 'ai'
+import type { Sandbox } from '@vercel/sandbox'
+import { gateway, tool, wrapLanguageModel } from 'ai'
 import { handlerContext } from 'experimental-a2/ai'
 import { createAgentServer } from 'experimental-a2/ai/server'
 import type { A2Store } from 'experimental-a2/server'
@@ -7,14 +8,14 @@ import { memory } from 'experimental-a2/store-memory'
 import { vercelQueues } from 'experimental-a2/scheduler-vercel'
 import { redisHttp } from 'experimental-a2/store-redis-http'
 import { z } from 'zod'
-import { CODING_MODEL } from '@/lib/models'
-import { appAgent } from '../_lib/agent'
-import { bash, desktop, SCREEN, screenshot, xdotool } from './desktop'
+import { CODING_MODEL, type CodingThinkingLevel } from '@/lib/models'
+import { type AppMessage, appAgent } from '../_lib/agent'
+import { bash, desktop, pointAt, screenshot, xdotool } from './desktop'
 
-const INSTRUCTIONS = `You are a coding agent with your own Linux computer: an Ubuntu desktop (${SCREEN.width}×${SCREEN.height}) with Google Chrome, and a shell. The user watches the screen next to this chat.
+const INSTRUCTIONS = `You are a coding agent with your own Linux computer: an Ubuntu desktop with Google Chrome, and a shell. The user watches the screen next to this chat, and the screen's size follows their window, so it can change between screenshots.
 - Use bash for anything a command can do, like code, files, and checks; it is instant. The desktop has no terminal app. Work in /vercel/sandbox. Node 22, npm, pnpm, Python 3, and git are installed. Start dev servers in the background (for example \`nohup pnpm dev > dev.log 2>&1 &\`) and check them with curl.
 - Use the screen to see and use apps: screenshot, click, type, key, and scroll. Coordinates are on a 1000×1000 grid over the screenshot: x from 0 (left) to 999 (right), y from 0 (top) to 999 (bottom).
-- Every screen action returns a new screenshot. Look at it before the next action, and don't claim something happened unless you saw it.
+- Every screen action returns a new screenshot. Use the latest one for coordinates, look at it before the next action, and don't claim something happened unless you saw it.
 - To open a page in Chrome, press ctrl+l, type the URL, and press Return.
 - Keep replies short and in plain text, without Markdown: what you did, and what you saw.`
 
@@ -41,10 +42,6 @@ const point = {
   x: z.number().int().min(0).max(999).describe('0 (left) to 999 (right)'),
   y: z.number().int().min(0).max(999).describe('0 (top) to 999 (bottom)'),
 }
-const toPixel = ({ x, y }: { x: number; y: number }) => [
-  String(Math.round(((x + 0.5) / 1000) * SCREEN.width)),
-  String(Math.round(((y + 0.5) / 1000) * SCREEN.height)),
-]
 
 /** The app's desktop, from the a2 session running this tool. */
 const currentDesktop = () =>
@@ -73,14 +70,14 @@ function screenTool<Input extends Record<string, unknown>>({
 }: {
   description: string
   inputSchema: z.ZodType<Input>
-  act: (input: Input) => string[][]
+  act: (input: Input & { sandbox: Sandbox }) => Promise<void>
 }) {
   return tool({
     description,
     inputSchema,
     execute: async (input: Input): Promise<Screen> => {
       const sandbox = await currentDesktop()
-      for (const args of act(input)) await xdotool({ sandbox, args })
+      await act({ ...input, sandbox })
       await new Promise((resolve) => setTimeout(resolve, 700))
       return { screenshot: await screenshot({ sandbox }) }
     },
@@ -104,26 +101,31 @@ const tools = {
       button: z.enum(['left', 'right', 'middle']).default('left'),
       clicks: z.number().int().min(1).max(3).default(1),
     }),
-    act: ({ x, y, button, clicks }) => [
-      ['mousemove', ...toPixel({ x, y })],
-      [
-        'click',
-        '--repeat',
-        String(clicks),
-        { left: '1', middle: '2', right: '3' }[button],
-      ],
-    ],
+    act: ({ sandbox, x, y, button, clicks }) =>
+      pointAt({
+        sandbox,
+        x,
+        y,
+        after: [
+          'click',
+          '--repeat',
+          String(clicks),
+          { left: '1', middle: '2', right: '3' }[button],
+        ],
+      }),
   }),
   type: screenTool({
     description: 'Type text where the keyboard focus is.',
     inputSchema: z.object({ text: z.string().min(1) }),
-    act: ({ text }) => [['type', '--delay', '12', '--', text]],
+    act: ({ sandbox, text }) =>
+      xdotool({ sandbox, args: ['type', '--delay', '12', '--', text] }),
   }),
   key: screenTool({
     description:
       'Press keys, as xdotool key names: "Return", "ctrl+l", "ctrl+shift+t", "Escape".',
     inputSchema: z.object({ keys: z.string().min(1) }),
-    act: ({ keys }) => [['key', '--', ...keys.split(/\s+/)]],
+    act: ({ sandbox, keys }) =>
+      xdotool({ sandbox, args: ['key', '--', ...keys.split(/\s+/)] }),
   }),
   scroll: screenTool({
     description: 'Scroll at a point on the screen.',
@@ -132,15 +134,18 @@ const tools = {
       direction: z.enum(['up', 'down', 'left', 'right']),
       amount: z.number().int().min(1).max(20).default(5),
     }),
-    act: ({ x, y, direction, amount }) => [
-      ['mousemove', ...toPixel({ x, y })],
-      [
-        'click',
-        '--repeat',
-        String(amount),
-        { up: '4', down: '5', left: '6', right: '7' }[direction],
-      ],
-    ],
+    act: ({ sandbox, x, y, direction, amount }) =>
+      pointAt({
+        sandbox,
+        x,
+        y,
+        after: [
+          'click',
+          '--repeat',
+          String(amount),
+          { up: '4', down: '5', left: '6', right: '7' }[direction],
+        ],
+      }),
   }),
   bash: tool({
     description:
@@ -169,17 +174,40 @@ const store = createStore()
  */
 export const scheduler = vercelQueues({ topic: 'margin-v3' })
 
+/** The model with the thinking level the request asked for. */
+const codingModel = (thinkingLevel: CodingThinkingLevel) =>
+  wrapLanguageModel({
+    model: gateway(CODING_MODEL),
+    middleware: {
+      transformParams: async ({ params }) => ({
+        ...params,
+        providerOptions: {
+          ...params.providerOptions,
+          google: {
+            ...params.providerOptions?.google,
+            thinkingConfig: { thinkingLevel },
+          },
+        },
+      }),
+    },
+  })
+
+// The request that started this turn is the latest user message.
+const request = (messages: AppMessage[]) =>
+  messages.findLast((message) => message.role === 'user')
+
 export const agentServer = createAgentServer({
   ...(store && { store }),
   scheduler,
   agent: appAgent,
-  model: CODING_MODEL,
-  // The request that started this turn is the latest user message.
+  model: ({ messages }) =>
+    codingModel(request(messages)?.metadata?.thinking ?? 'medium'),
   instructions: ({ messages }) =>
-    messages.findLast((message) => message.role === 'user')?.metadata?.via ===
-    'voice'
+    request(messages)?.metadata?.via === 'voice'
       ? `${INSTRUCTIONS}\n\n${DELEGATED}`
       : INSTRUCTIONS,
+  // Explicit, since the wrapped model isn't a plain Gateway id.
+  compaction: { thresholdTokens: 200_000 },
   tools,
   maxSteps: 80,
 })

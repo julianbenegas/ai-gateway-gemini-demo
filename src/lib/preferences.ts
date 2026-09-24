@@ -7,7 +7,11 @@ import { type ThinkingLevel, thinkingLevels } from './models'
 export const preferenceCookie = {
   v1: { sidebar: 'margin_v1_sidebar', thinking: 'margin_v1_thinking' },
   v2: { sidebar: 'margin_v2_sidebar', thinking: 'margin_v2_thinking' },
-  v3: { sidebar: 'margin_v3_sidebar', thinking: 'margin_v3_thinking' },
+  v3: {
+    sidebar: 'margin_v3_sidebar',
+    thinking: 'margin_v3_thinking',
+    agentThinking: 'margin_v3_agent_thinking',
+  },
 } as const
 
 /** The saved thinking level, or the example's default. */
