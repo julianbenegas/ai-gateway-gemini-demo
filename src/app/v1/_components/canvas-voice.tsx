@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { Experimental_RealtimeSessionConfig } from 'ai'
 import type { Editor } from 'tldraw'
 import { Notice } from '@/ui/notice'
+import { toolLabels, Transcript } from '@/ui/transcript'
 import { VoiceControls } from '@/ui/voice-controls'
 import { CANVAS_INSTRUCTIONS, canvasTools } from '../_lib/tools'
 import { useVoiceAgent } from '../_lib/use-voice-agent'
@@ -14,8 +15,12 @@ const configuration = {
   outputModalities: ['audio'],
   inputAudioFormat: { type: 'audio/pcm', rate: 16000 },
   outputAudioFormat: { type: 'audio/pcm', rate: 24000 },
+  // Gemini transcribes both sides itself, for the transcript panel.
+  inputAudioTranscription: {},
+  outputAudioTranscription: {},
   turnDetection: { type: 'server-vad' },
 } satisfies Experimental_RealtimeSessionConfig
+const labels = toolLabels(canvasTools)
 
 export function CanvasVoice({ editor }: { editor: Editor | null }) {
   const voice = useVoiceAgent({
@@ -24,12 +29,13 @@ export function CanvasVoice({ editor }: { editor: Editor | null }) {
     tools: canvasTools,
     context: editor && { editor },
   })
-  const { error, setError, activity, setActivity, end } = voice
+  const [transcriptOpen, setTranscriptOpen] = useState(false)
+  const { end, showError } = voice
   useEffect(() => {
     if (!editor) return
     const onCrash = () => {
       end()
-      setError(
+      showError(
         'The canvas encountered an error. Refresh the page to reopen your board.',
       )
     }
@@ -37,7 +43,7 @@ export function CanvasVoice({ editor }: { editor: Editor | null }) {
     return () => {
       editor.off('crash', onCrash)
     }
-  }, [editor, end, setError])
+  }, [editor, end, showError])
   return (
     <div className="relative">
       <VoiceControls
@@ -46,19 +52,29 @@ export function CanvasVoice({ editor }: { editor: Editor | null }) {
         onStart={() => void voice.start()}
         onMute={voice.mute}
         onEnd={voice.end}
+        transcript={
+          voice.messages.length
+            ? {
+                open: transcriptOpen,
+                onToggle: () => setTranscriptOpen(!transcriptOpen),
+              }
+            : undefined
+        }
       />
-      {(activity || error) && (
-        <Notice
-          tone={error ? 'error' : activity!.state}
-          onDismiss={() => {
-            setError(null)
-            setActivity(null)
-          }}
-          className="absolute top-11 right-0"
-        >
-          {error || activity?.label}
-        </Notice>
-      )}
+      <div className="absolute top-11 right-0 z-10 flex flex-col items-end gap-2">
+        {voice.notice && (
+          <Notice tone={voice.notice.tone} onDismiss={voice.dismissNotice}>
+            {voice.notice.message}
+          </Notice>
+        )}
+        {transcriptOpen && !!voice.messages.length && (
+          <Transcript
+            messages={voice.messages}
+            labels={labels}
+            onClose={() => setTranscriptOpen(false)}
+          />
+        )}
+      </div>
     </div>
   )
 }

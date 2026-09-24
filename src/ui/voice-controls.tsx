@@ -1,4 +1,12 @@
-import { AudioLines, LoaderCircle, Mic, MicOff, Square, X } from 'lucide-react'
+import {
+  AudioLines,
+  LoaderCircle,
+  MessageSquareText,
+  Mic,
+  MicOff,
+  Square,
+  X,
+} from 'lucide-react'
 import { Button, IconButton } from './button'
 import { cx } from './cx'
 
@@ -13,6 +21,29 @@ export type VoiceStatus = {
 }
 
 export function VoiceControls({
+  transcript,
+  ...props
+}: Parameters<typeof SessionControls>[0] & {
+  /** Shows a transcript toggle; pass it once there is something to show. */
+  transcript?: { open: boolean; onToggle: () => void }
+}) {
+  return (
+    <div className="flex items-center gap-0.5">
+      <SessionControls {...props} />
+      {transcript && (
+        <IconButton
+          label="Show transcript"
+          aria-pressed={transcript.open}
+          onClick={transcript.onToggle}
+        >
+          <MessageSquareText size={15} />
+        </IconButton>
+      )}
+    </div>
+  )
+}
+
+function SessionControls({
   status,
   label,
   ariaLabel,

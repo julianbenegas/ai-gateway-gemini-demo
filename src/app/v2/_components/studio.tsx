@@ -36,6 +36,9 @@ const configuration = {
   outputModalities: ['audio'],
   inputAudioFormat: { type: 'audio/pcm', rate: 16000 },
   outputAudioFormat: { type: 'audio/pcm', rate: 24000 },
+  // Gemini transcribes both sides itself, for the transcript panel.
+  inputAudioTranscription: {},
+  outputAudioTranscription: {},
   turnDetection: { type: 'server-vad' },
 } satisfies Experimental_RealtimeSessionConfig
 
@@ -65,6 +68,7 @@ export function Studio({
   const [noteOpen, setNoteOpen] = useState(false)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
+  const [transcriptOpen, setTranscriptOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [draftDrawings, setDraftDrawings] = useState<SiteAnnotation[]>([])
   const [failedDrawings, setFailedDrawings] = useState<string[]>([])
@@ -424,9 +428,7 @@ export function Studio({
   }
 
   const notice =
-    error ||
-    voice.error ||
-    (voice.activity?.state === 'error' ? voice.activity.label : null)
+    error || (voice.notice?.tone === 'error' ? voice.notice.message : null)
   const savingDrawings = draftDrawings.length > failedDrawings.length
   const lastDrawing = site?.annotations.findLast(
     (annotation) => annotation.drawing,
@@ -521,8 +523,7 @@ export function Studio({
             }
             onDismiss={() => {
               setError(null)
-              voice.setError(null)
-              voice.setActivity(null)
+              voice.dismissNotice()
             }}
           >
             {notice}
@@ -530,6 +531,8 @@ export function Studio({
         )}
         <StudioDock
           voice={{ ...voice, end: endVoice }}
+          transcriptOpen={transcriptOpen}
+          onToggleTranscript={() => setTranscriptOpen(!transcriptOpen)}
           mode={mode}
           selection={selection}
           noteOpen={noteOpen}

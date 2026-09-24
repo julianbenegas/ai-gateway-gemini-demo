@@ -9,15 +9,21 @@ import {
   X,
 } from 'lucide-react'
 import { Button, IconButton } from '@/ui/button'
+import type { UIMessage } from 'ai'
+import { toolLabels, Transcript } from '@/ui/transcript'
 import { VoiceControls, type VoiceStatus } from '@/ui/voice-controls'
+import { siteTools } from '../_lib/tools'
 import type { ElementTarget } from '../_lib/types'
 
 export type StudioMode = 'browse' | 'select' | 'draw'
 
+const labels = toolLabels(siteTools)
 const panel = 'bg-background shadow-lg shadow-black/15'
 
 export function StudioDock({
   voice,
+  transcriptOpen,
+  onToggleTranscript,
   mode,
   selection,
   noteOpen,
@@ -34,7 +40,13 @@ export function StudioDock({
   onUndoDrawing,
   onToggleNotes,
 }: {
-  voice: VoiceStatus & { mute: () => void; end: () => void }
+  voice: VoiceStatus & {
+    mute: () => void
+    end: () => void
+    messages: UIMessage[]
+  }
+  transcriptOpen: boolean
+  onToggleTranscript: () => void
   mode: StudioMode
   selection: ElementTarget | null
   noteOpen: boolean
@@ -71,6 +83,13 @@ export function StudioDock({
           </IconButton>
         </div>
       )}
+      {transcriptOpen && !!voice.messages.length && (
+        <Transcript
+          messages={voice.messages}
+          labels={labels}
+          onClose={onToggleTranscript}
+        />
+      )}
       {noteOpen && selection && (
         <NoteEditor
           tag={selection.tag}
@@ -90,6 +109,11 @@ export function StudioDock({
           ariaLabel="Talk and annotate"
           onStart={onStartVoice}
           disabled={disabled}
+          transcript={
+            voice.messages.length
+              ? { open: transcriptOpen, onToggle: onToggleTranscript }
+              : undefined
+          }
         />
         <span className="w-1" />
         <IconButton

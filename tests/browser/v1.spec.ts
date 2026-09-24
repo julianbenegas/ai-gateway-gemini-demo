@@ -779,7 +779,23 @@ test('microphone uses Gemini audio settings, mutes, resumes, and stops on end', 
     rate: 24000,
   })
   expect(configuration.voice).toBe('Aoede')
-  expect(configuration.inputAudioTranscription).toBeUndefined()
+  expect(configuration.inputAudioTranscription).toEqual({})
+  expect(configuration.outputAudioTranscription).toEqual({})
+  expect(configuration.tools.map((tool: any) => tool.name)).toEqual([
+    'read_board',
+    'read_shapes',
+    'edit_html',
+    'apply_actions',
+    'inspect_canvas',
+  ])
+  expect(
+    configuration.tools.find((tool: any) => tool.name === 'read_shapes')
+      .parameters,
+  ).toMatchObject({
+    type: 'object',
+    properties: { ids: { type: 'array' } },
+    required: ['ids'],
+  })
   await page
     .getByRole('button', { name: 'Mute microphone', exact: true })
     .click()
@@ -908,4 +924,52 @@ test('a failed Gateway connection leaves an actionable error and allows retry', 
   await expect(
     page.getByRole('button', { name: 'Start voice', exact: true }),
   ).toBeEnabled()
+})
+
+test('the transcript shows both sides of the conversation and tool calls', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await expect(
+    page.getByRole('button', { name: 'Show transcript' }),
+  ).toHaveCount(0)
+  await connectVoice(page)
+  gateway.send({
+    type: 'input-transcription-completed',
+    itemId: 'input-1',
+    transcript: 'Make the heading say Great.',
+  })
+  gateway.send({
+    type: 'audio-transcript-delta',
+    responseId: 'response-t',
+    itemId: 'output-1',
+    delta: 'On it, ',
+  })
+  gateway.send({
+    type: 'audio-transcript-delta',
+    responseId: 'response-t',
+    itemId: 'output-1',
+    delta: 'changing it now.',
+  })
+  // Gemini streams each call's arguments as one delta before the final event.
+  gateway.send({
+    type: 'function-call-arguments-delta',
+    responseId: 'response-1',
+    itemId: 'item-transcript-call',
+    callId: 'transcript-call',
+    delta: '{}',
+  })
+  await gateway.call('read_board', {}, 'transcript-call')
+  await page.getByRole('button', { name: 'Show transcript' }).click()
+  const transcript = page.getByRole('region', { name: 'Transcript' })
+  await expect(transcript.locator('[data-role="user"]')).toHaveText(
+    'Make the heading say Great.',
+  )
+  await expect(transcript.locator('[data-role="assistant"]')).toHaveText(
+    'On it, changing it now.',
+  )
+  await expect(transcript).toContainText('Looking at your board')
+  await page.getByRole('button', { name: 'Close transcript' }).click()
+  await expect(transcript).toHaveCount(0)
 })

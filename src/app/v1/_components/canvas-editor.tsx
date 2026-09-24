@@ -110,7 +110,9 @@ function BoardSync({ onBoards }: { onBoards: (boards: Boards) => void }) {
     }),
     [editor],
   )
-  useEffect(() => onBoards(boards), [boards, onBoards])
+  useEffect(() => {
+    onBoards(boards)
+  }, [boards, onBoards])
   return null
 }
 

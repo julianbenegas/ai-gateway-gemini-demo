@@ -6,11 +6,8 @@ export async function mockGateway(page: Page, endpoint = '**/v1/api/realtime') {
   const sent: Record<string, unknown>[] = []
   await page.route(endpoint, (route) =>
     route.fulfill({
-      json: {
-        token: 'test-token',
-        url: 'wss://gateway.test/realtime',
-        tools: [],
-      },
+      // Like the real routes: tools are declared by the browser, not here.
+      json: { token: 'test-token', url: 'wss://gateway.test/realtime' },
     }),
   )
   await page.routeWebSocket('wss://gateway.test/realtime', (ws) => {

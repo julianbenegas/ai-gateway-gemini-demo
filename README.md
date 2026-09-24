@@ -55,7 +55,20 @@ Nothing is injected into the conversation; the agent pulls context through tools
 
 **Studio:** `read_selection` (DOM selection, notes, and drawings anchored to elements), `read_html`, `edit_html` (literal search/replace), `write_html` (full rewrite).
 
-Realtime tool calls arrive in the browser over the model's WebSocket, so the tools run there. Each example defines them in `_lib/tools.ts` like AI SDK tools, with a label, a zod `input`, and an `execute` typed from it (`lib/tools.ts`). The voice loop generates the session's tool definitions from those inputs, validates every call's name and arguments, and passes `execute` the example's context: the tldraw editor in v1 and the studio's actions in v2. The token route mints only a Gateway token.
+Realtime tool calls arrive in the browser over the model's WebSocket, so the tools run there. Each example defines them in `_lib/tools.ts` like AI SDK tools, with a label, a zod `input`, and an `execute` typed from it (`lib/tools.ts`). The voice loop declares the session's tool definitions from those inputs, validates every call's name and arguments, and passes `execute` the example's context: the tldraw editor in v1 and the studio's actions in v2. The token route mints only a Gateway token.
+
+## Voice loop
+
+`lib/voice` holds the pieces, and each example assembles them in `_lib/use-voice-agent.ts`:
+
+- `useVoiceSession`: the microphone, the connection, and the raw AI SDK handle (`realtime.messages`, `events`, `sendEvent`). Other hooks attach with `subscribe` and `handleToolCalls`.
+- `useToolCalls`: validates and runs tool calls, deduplicates call IDs, and reports activity.
+- `useResponses`: thinking/writing state, the stall notice, failure errors, and one retry when a tool call's JSON arrives cut off.
+- `voiceState`: the one-word status next to the controls.
+
+A session's state is per instance, but the microphone, the speakers, and Gateway's session limit are shared. Create one session per page and pass it down; two instances mean two agents listening to the same microphone.
+
+Gemini transcribes both sides of the conversation (`inputAudioTranscription` and `outputAudioTranscription`). The AI SDK turns the transcripts and tool calls into `messages`, which the transcript toggle next to the voice controls shows as a small chat.
 
 ## Agent auth
 
