@@ -99,8 +99,12 @@ export function useVoiceAgent<Context>({
     start: session.start,
     end: session.end,
     mute: session.mute,
-    /** The conversation so far: transcripts and tool calls. */
+    /** The conversation so far: transcripts, typed messages, and tool calls. */
     messages,
+    /** Types to the model in the live session; it answers by voice. */
+    sendText: session.connected
+      ? (text: string) => session.realtime.sendTextMessage(text)
+      : null,
     sessionStarts,
     notice,
     showError: session.setError,

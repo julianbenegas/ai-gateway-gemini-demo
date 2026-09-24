@@ -76,6 +76,7 @@ export function CanvasVoice({
           <Transcript
             messages={voice.messages}
             sessionStarts={voice.sessionStarts}
+            onSend={voice.sendText}
             labels={labels}
             onClose={() => setTranscriptOpen(false)}
           />

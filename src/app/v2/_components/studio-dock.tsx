@@ -45,6 +45,7 @@ export function StudioDock({
     end: () => void
     messages: UIMessage[]
     sessionStarts: number[]
+    sendText: ((text: string) => void) | null
     thinking: { enabled: boolean; locked: boolean; toggle: () => void }
   }
   transcriptOpen: boolean
@@ -89,6 +90,7 @@ export function StudioDock({
         <Transcript
           messages={voice.messages}
           sessionStarts={voice.sessionStarts}
+          onSend={voice.sendText}
           labels={labels}
           onClose={onToggleTranscript}
         />

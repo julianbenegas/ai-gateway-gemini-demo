@@ -1,19 +1,21 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import { Asterisk, LoaderCircle, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowUp, Asterisk, LoaderCircle, X } from 'lucide-react'
 import type { UIMessage } from 'ai'
 import { IconButton } from './button'
 import { cx } from './cx'
 
 /**
- * Voice messages as a small chat: speech and tool calls. The model forgets
- * everything when a session ends, so a divider marks where each one starts.
+ * Voice messages as a small chat: speech, typed messages, and tool calls. The
+ * model forgets everything when a session ends, so a divider marks where each
+ * one starts.
  */
 export function Transcript({
   messages,
   sessionStarts = [],
   labels,
+  onSend,
   onClose,
   className,
 }: {
@@ -22,6 +24,8 @@ export function Transcript({
   sessionStarts?: number[]
   /** Tool names to the labels shown for them. */
   labels: Record<string, string>
+  /** Sends a typed message to the model; null while no session is live. */
+  onSend: ((text: string) => void) | null
   onClose: () => void
   className?: string
 }) {
@@ -108,7 +112,46 @@ export function Transcript({
         )}
         <li ref={end} aria-hidden />
       </ol>
+      <Composer onSend={onSend} />
     </section>
+  )
+}
+
+function Composer({ onSend }: { onSend: ((text: string) => void) | null }) {
+  const [text, setText] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  // Ready to type as soon as a session is live.
+  useEffect(() => {
+    if (onSend) input.current?.focus()
+  }, [!!onSend])
+  return (
+    <form
+      className="flex shrink-0 items-center gap-1 p-2 pt-0"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!onSend || !text.trim()) return
+        onSend(text.trim())
+        setText('')
+      }}
+    >
+      <input
+        ref={input}
+        aria-label="Message"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        disabled={!onSend}
+        placeholder={onSend ? 'Type a message' : 'Start voice to type'}
+        className="h-8 min-w-0 flex-1 bg-accent/5 px-2 text-accent outline-1 -outline-offset-1 outline-accent/40 outline-dotted placeholder:text-accent/50 focus:outline-2 focus:outline-accent focus:outline-dashed disabled:bg-shade disabled:outline-none disabled:placeholder:text-faint"
+      />
+      <IconButton
+        label="Send message"
+        type="submit"
+        variant="accent"
+        disabled={!onSend || !text.trim()}
+      >
+        <ArrowUp size={15} />
+      </IconButton>
+    </form>
   )
 }
 

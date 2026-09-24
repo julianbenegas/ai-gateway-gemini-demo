@@ -827,20 +827,13 @@ test('microphone uses Gemini audio settings, mutes, resumes, and stops on end', 
   ).toBe(true)
 })
 
-test('agent interaction is voice only and has no conversation panel', async ({
+test('the transcript starts closed and the canvas stays full width', async ({
   page,
 }) => {
   await mockGateway(page)
   await openWorkspace(page)
-  await expect(
-    page.getByRole('textbox', { name: 'Message your design partner' }),
-  ).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Send message' })).toHaveCount(
-    0,
-  )
-  await expect(
-    page.locator('.agent-panel, .conversation, .composer'),
-  ).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'Message' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Transcript' })).toHaveCount(0)
   await connectVoice(page)
   await expect(page.locator('[data-voice-state]')).toContainText('Listening')
   const canvas = (await page.locator('[data-canvas]').boundingBox())!
@@ -1089,4 +1082,77 @@ test('duplicating a board from its context menu copies its shapes', async ({
         ).length,
     )
     .toBe(2)
+})
+
+test('typed messages go to the live session from the transcript', async ({
+  page,
+}) => {
+  const gateway = await mockGateway(page)
+  await openWorkspace(page)
+  await page.getByRole('button', { name: 'Show transcript' }).click()
+  const input = page.getByRole('textbox', { name: 'Message' })
+  await expect(input).toBeDisabled()
+  await expect(input).toHaveAttribute('placeholder', 'Start voice to type')
+  await connectVoice(page)
+  await expect(input).toBeFocused()
+  // The website is selected; typing must not reach tldraw's shortcuts.
+  await input.pressSequentially('Make the heading redd')
+  await input.press('Backspace')
+  await input.press('Enter')
+  await expect(input).toHaveValue('')
+  await expect(page.locator('[data-website] iframe')).toHaveCount(1)
+  await expect
+    .poll(() =>
+      gateway.sent.some(
+        (event: any) =>
+          event.type === 'conversation-item-create' &&
+          event.item?.type === 'text-message' &&
+          event.item.text === 'Make the heading red',
+      ),
+    )
+    .toBe(true)
+  expect(gateway.sent.at(-1)).toMatchObject({ type: 'response-create' })
+  await expect(
+    page
+      .getByRole('region', { name: 'Transcript' })
+      .locator('[data-role="user"]'),
+  ).toHaveText('Make the heading red')
+  await page.getByRole('button', { name: 'End voice session' }).click()
+  await expect(input).toBeDisabled()
+})
+
+test('deleting a board from its context menu is undoable, and the last one stays', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page
+    .getByRole('button', { name: 'First ideas', exact: true })
+    .click({ button: 'right' })
+  await expect(
+    page.getByRole('menuitem', { name: 'Delete', exact: true }),
+  ).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'New board', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Untitled board 2', exact: true }),
+  ).toHaveAttribute('aria-current', 'page')
+  await page
+    .getByRole('button', { name: 'First ideas', exact: true })
+    .click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'First ideas', exact: true }),
+  ).toHaveCount(0)
+  await expect
+    .poll(async () =>
+      (await savedRecords(page)).some(
+        (record) => record.typeName === 'page' && record.name === 'First ideas',
+      ),
+    )
+    .toBe(false)
+  await page.locator('[data-canvas]').click({ position: { x: 400, y: 400 } })
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(
+    page.getByRole('button', { name: 'First ideas', exact: true }),
+  ).toBeVisible()
 })

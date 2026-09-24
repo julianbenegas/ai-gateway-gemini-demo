@@ -13,6 +13,7 @@ import { owner, requireOwner } from './auth'
 import { authorizeAgent, issueGrant, revokeGrant } from './grants'
 import {
   createDesign,
+  deleteDesign,
   duplicateDesign,
   editDesign,
   listDesigns,
@@ -71,6 +72,12 @@ export const api = new Elysia({ prefix: '/v2/api' })
       params: design,
       body: z.object({ name: z.string().trim().min(1).max(80) }),
     },
+  )
+  .delete(
+    '/designs/:id',
+    async ({ params }) =>
+      deleteDesign({ owner: await requireOwner(), id: params.id }),
+    { params: design },
   )
   .post(
     '/designs/:id/duplicate',

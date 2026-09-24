@@ -5,7 +5,7 @@ Voice-first website design with Gemini 3.8 Live through AI Gateway. Each example
 - **`/v1/<board>` — canvas.** A tldraw board where websites are shapes. The agent reads the board, edits HTML, and draws with native tldraw shapes. The board is saved to Redis and rendered on the server.
 - **`/v2/<design>` — studio.** A website you point at, draw on, and annotate. New designs start empty, with a prompt to talk, and the agent writes them.
 
-`/` redirects to `/v1`. Voice is the only way to talk to the agent. There is no chat.
+`/` redirects to `/v1`. Voice first: the agent answers by voice, and during a session you can also type to it from the transcript.
 
 ## Run
 
@@ -68,7 +68,7 @@ Realtime tool calls arrive in the browser over the model's WebSocket, so the too
 
 A session's state is per instance, but the microphone, the speakers, and Gateway's session limit are shared. Create one session per page and pass it down; two instances mean two agents listening to the same microphone.
 
-Gemini transcribes both sides of the conversation (`inputAudioTranscription` and `outputAudioTranscription`). The AI SDK turns the transcripts and tool calls into `messages`, which the transcript toggle next to the voice controls shows as a small chat. The transcript lasts while the page is open, across sessions, but the model forgets everything when a session ends, so a dashed line marks where each new one starts. To start fresh on a copy, right-click a board or design and choose Duplicate.
+Gemini transcribes both sides of the conversation (`inputAudioTranscription` and `outputAudioTranscription`). The AI SDK turns the transcripts and tool calls into `messages`, which the transcript toggle next to the voice controls shows as a small chat. The transcript lasts while the page is open, across sessions, but the model forgets everything when a session ends, so a dashed line marks where each new one starts. To start fresh on a copy, right-click a board or design and choose Duplicate. Delete is there too: a board goes back with tldraw's undo, and the last one can't be deleted; a design is gone for good, so it asks first.
 
 ## Extended thinking
 

@@ -85,6 +85,10 @@ class MemoryRedis {
       [...hash].map(([field, value]) => [field, decode(value)]),
     )
   }
+  async hdel(key: string, ...fields: string[]) {
+    const hash = this.hashes.get(key)
+    return fields.filter((field) => hash?.delete(field)).length
+  }
   async hlen(key: string) {
     return this.hashes.get(key)?.size ?? 0
   }
@@ -110,6 +114,10 @@ class MemoryRedis {
     const transaction = {
       hset: (...args: Parameters<MemoryRedis['hset']>) =>
         queue(() => this.hset(...args)),
+      hdel: (...args: Parameters<MemoryRedis['hdel']>) =>
+        queue(() => this.hdel(...args)),
+      del: (...args: Parameters<MemoryRedis['del']>) =>
+        queue(() => this.del(...args)),
       lpush: (...args: Parameters<MemoryRedis['lpush']>) =>
         queue(() => this.lpush(...args)),
       ltrim: (...args: Parameters<MemoryRedis['ltrim']>) =>

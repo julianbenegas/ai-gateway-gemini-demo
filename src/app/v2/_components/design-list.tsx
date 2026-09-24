@@ -11,6 +11,7 @@ export function DesignList({
   onResize,
   onRename,
   onDuplicate,
+  onDelete,
 }: {
   designs: Design[]
   currentId: string | null
@@ -18,6 +19,7 @@ export function DesignList({
   onResize: (width: number) => void
   onRename: (design: { id: string; name: string }) => void
   onDuplicate: (design: { id: string }) => void
+  onDelete: (design: { id: string; name: string }) => void
 }) {
   return (
     <aside
@@ -37,6 +39,11 @@ export function DesignList({
               {
                 label: 'Duplicate',
                 onSelect: () => onDuplicate({ id: design.id }),
+              },
+              {
+                label: 'Delete',
+                danger: true,
+                onSelect: () => onDelete({ id: design.id, name: design.name }),
               },
             ]}
           />

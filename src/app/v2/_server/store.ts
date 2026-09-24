@@ -120,6 +120,17 @@ export async function duplicateDesign(ref: DesignRef) {
   return copy
 }
 
+/** Deletes a design with its notes and edit history. Not undoable. */
+export async function deleteDesign(ref: DesignRef) {
+  await readDesign(ref)
+  await redis()
+    .multi()
+    .del(designKey(ref), historyKey(ref))
+    .hdel(designsKey(ref.owner), ref.id)
+    .exec()
+  return { ok: true }
+}
+
 /** Applies an agent edit, keeping the previous HTML for undo. */
 export async function editDesign({
   ref,

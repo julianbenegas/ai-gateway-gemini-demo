@@ -121,6 +121,16 @@ export function Workspace({
                     editor?.duplicatePage(board.id as TLPageId)
                   },
                 },
+                {
+                  // Undoable with tldraw's undo; the last board can't go.
+                  label: 'Delete',
+                  danger: true,
+                  disabled: boards.pages.length === 1,
+                  onSelect: () => {
+                    editor?.markHistoryStoppingPoint('delete board')
+                    editor?.deletePage(board.id as TLPageId)
+                  },
+                },
               ]}
             />
           ))}

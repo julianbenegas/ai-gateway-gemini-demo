@@ -1,8 +1,14 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import { cx } from './cx'
 
-export type MenuItem = { label: string; onSelect: () => void }
+export type MenuItem = {
+  label: string
+  onSelect: () => void
+  danger?: boolean
+  disabled?: boolean
+}
 
 /** A small menu at a point, such as a right-click. */
 export function Menu({
@@ -16,7 +22,7 @@ export function Menu({
 }) {
   const menu = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    menu.current?.querySelector('button')?.focus()
+    menu.current?.querySelector<HTMLButtonElement>('button:enabled')?.focus()
     const outside = (event: PointerEvent) => {
       if (!menu.current?.contains(event.target as Node)) onClose()
     }
@@ -41,11 +47,17 @@ export function Menu({
         <button
           key={item.label}
           role="menuitem"
+          disabled={item.disabled}
           onClick={() => {
             onClose()
             item.onSelect()
           }}
-          className="flex h-7 w-full items-center px-3 text-left text-dim outline-none hover:bg-shade-hover hover:text-bright focus-visible:bg-shade-hover focus-visible:text-bright"
+          className={cx(
+            'flex h-7 w-full items-center px-3 text-left outline-none disabled:opacity-40',
+            item.danger
+              ? 'text-danger hover:bg-danger/10 focus-visible:bg-danger/10'
+              : 'text-dim hover:bg-shade-hover hover:text-bright focus-visible:bg-shade-hover focus-visible:text-bright',
+          )}
         >
           {item.label}
         </button>

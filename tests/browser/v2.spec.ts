@@ -493,3 +493,38 @@ test('duplicating a design copies its page into a new design', async ({
     page.getByRole('button', { name: 'Talk and annotate', exact: true }),
   ).toBeVisible()
 })
+
+test('deleting a design asks first and opens another one', async ({ page }) => {
+  const { id: first } = await openFixture(page)
+  const second = await createDesign(page)
+  page.once('dialog', (dialog) => dialog.dismiss())
+  await page
+    .getByRole('button', { name: 'Design 2', exact: true })
+    .click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Design 2', exact: true }),
+  ).toBeVisible()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page
+    .getByRole('button', { name: 'Design 2', exact: true })
+    .click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await page.waitForURL(new RegExp(`/v2/${first}$`))
+  await expect(
+    page.getByRole('button', { name: 'Design 1', exact: true }),
+  ).toHaveAttribute('aria-current', 'page')
+  await expect(
+    page.getByRole('link', { name: 'Design 2', exact: true }),
+  ).toHaveCount(0)
+  expect((await page.request.get(`/v2/api/designs/${second}`)).status()).toBe(
+    404,
+  )
+  page.once('dialog', (dialog) => dialog.accept())
+  await page
+    .getByRole('button', { name: 'Design 1', exact: true })
+    .click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await page.waitForURL(/\/v2$/)
+  await expect(page.getByText('No designs')).toBeVisible()
+})

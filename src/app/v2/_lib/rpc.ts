@@ -14,6 +14,7 @@ export const studioApi = {
   designs: () => unwrap(api.designs.get()),
   renameDesign: ({ id, name }: { id: string; name: string }) =>
     unwrap(design(id).patch({ name })),
+  deleteDesign: ({ id }: { id: string }) => unwrap(design(id).delete()),
   duplicateDesign: ({ id }: { id: string }) =>
     unwrap(design(id).duplicate.post()),
   undoAgentEdit: ({ id }: { id: string }) => unwrap(design(id).undo.post()),

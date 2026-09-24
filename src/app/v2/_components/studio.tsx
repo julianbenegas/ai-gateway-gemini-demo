@@ -259,6 +259,19 @@ export function Studio({
       fail(error)
     }
   }
+  // Permanent, unlike agent edits, so it asks first.
+  const deleteDesign = async ({ id, name }: { id: string; name: string }) => {
+    if (!window.confirm(`Delete ${name}? This can't be undone.`)) return
+    const current = id === site?.id
+    if (current) endVoice()
+    try {
+      await studioApi.deleteDesign({ id })
+      if (current) router.push('/v2')
+      else setDesigns((designs) => designs.filter((d) => d.id !== id))
+    } catch (error) {
+      fail(error)
+    }
+  }
   const renameDesign = async ({ id, name }: { id: string; name: string }) => {
     const previous = designs
     setDesigns(designs.map((d) => (d.id === id ? { ...d, name } : d)))
@@ -432,6 +445,7 @@ export function Studio({
           onResize={setSidebarWidth}
           onRename={renameDesign}
           onDuplicate={duplicateDesign}
+          onDelete={deleteDesign}
         />
       )}
       <div className="relative isolate col-start-2 row-start-2 min-h-0 overflow-hidden">
