@@ -9,4 +9,6 @@ export const appsApi = {
     unwrap(app(id).patch({ name })),
   deleteApp: ({ id }: { id: string }) => unwrap(app(id).delete()),
   openDesktop: ({ id }: { id: string }) => unwrap(app(id).desktop.post()),
+  portStatus: ({ id, port }: { id: string; port: number }) =>
+    unwrap(app(id).ports({ port }).get()),
 }

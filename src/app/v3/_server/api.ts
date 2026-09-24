@@ -6,7 +6,7 @@ import { thinkingLevels } from '@/lib/models'
 import { realtimeToken } from '@/lib/realtime'
 import { deleteApp, listApps, ownsApp, renameApp } from './apps'
 import { owner, requireOwner } from './auth'
-import { desktopSocket } from './desktop'
+import { answers, desktop, desktopSocket } from './desktop'
 import { HttpError } from '@/lib/api'
 
 const app = z.object({ id: z.uuid() })
@@ -45,6 +45,21 @@ export const api = new Elysia({ prefix: '/v3/api' })
     async ({ params }) =>
       deleteApp({ owner: await requireOwner(), id: params.id }),
     { params: app },
+  )
+  // Whether the server the App tab shows still answers.
+  .get(
+    '/apps/:id/ports/:port',
+    async ({ params }) => {
+      const { id } = await requireApp(params)
+      const sandbox = await desktop({ appId: id })
+      return { up: (await answers({ sandbox, port: params.port })) > 0 }
+    },
+    {
+      params: z.object({
+        id: z.uuid(),
+        port: z.coerce.number().int().min(1).max(65535),
+      }),
+    },
   )
   // Boots, resumes, or keeps alive the app's desktop; returns its socket.
   .post(

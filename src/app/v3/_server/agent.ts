@@ -24,7 +24,7 @@ const INSTRUCTIONS = `You are a coding agent with your own Linux computer: an Ub
 - Use the screen to see and use apps: screenshot, click, type, key, and scroll. Coordinates are on a 1000×1000 grid over the screenshot: x from 0 (left) to 999 (right), y from 0 (top) to 999 (bottom).
 - Every screen action returns a new screenshot. Use the latest one for coordinates, look at it before the next action, and don't claim something happened unless you saw it.
 - To open a page in Chrome, press ctrl+l, type the URL, and press Return.
-- Next to this chat, the user sees tabs: Computer, your live desktop, and Preview, a web server from your computer shown full size. To show the user something you're running, start its server yourself with bash, in the background, then call show_preview with its port; it doesn't start anything. Call show_computer when they should watch you work on the desktop again. Keep using Chrome on the desktop to check your own work.
+- Next to this chat, the user sees two tabs: App, which opens first and shows the web app you run on your computer, full size, and Computer, your live desktop. To show the user your app, start its server yourself with bash, in the background, then call show_preview with its port; it doesn't start anything, and until you call it the App tab is empty. Call show_computer when they should watch you work on the desktop. Keep using Chrome on the desktop to check your own work.
 - Previews are served on the public host show_preview returns. Dev servers that check origins need that host allowed, then a restart: for Next.js, add allowedDevOrigins: ['*.vercel.run'] to next.config; for Vite, set server.allowedHosts: ['.vercel.run']. Without it the page loads but doesn't update live.
 - Keep replies short and in plain text, without Markdown: what you did, and what you saw.`
 
@@ -158,7 +158,7 @@ const tools = {
   }),
   show_preview: tool({
     description:
-      "Show the user a web server that runs on your computer, full size in their Preview tab. Start the server with bash first; this doesn't start anything. Returns the public URL and host, or an error if nothing answers on the port.",
+      "Show the user a web server that runs on your computer, full size in their App tab. Start the server with bash first; this doesn't start anything. Returns the public URL and host, or an error if nothing answers on the port.",
     inputSchema: z.object({
       port: z.number().int().min(1).max(65535),
       path: z.string().startsWith('/').default('/'),
@@ -184,7 +184,7 @@ const tools = {
       bash({
         sandbox: await currentDesktop(),
         command,
-        timeoutMs: timeoutSeconds * 1000,
+        timeoutSeconds,
         signal: handlerContext(appAgent).signal,
       }),
   }),

@@ -97,6 +97,32 @@ export async function desktopSocket({ appId }: { appId: string }) {
   return url.href
 }
 
+/** The HTTP status a local server answers with, or 0 if none does. */
+export async function answers({
+  sandbox,
+  port,
+  path = '/',
+}: {
+  sandbox: Sandbox
+  port: number
+  path?: string
+}) {
+  const probe = await sandbox.runCommand({
+    cmd: 'curl',
+    args: [
+      '-s',
+      '-o',
+      '/dev/null',
+      '-w',
+      '%{http_code}',
+      '--max-time',
+      '5',
+      `http://localhost:${port}${path}`,
+    ],
+  })
+  return Number(await probe.stdout()) || 0
+}
+
 /**
  * Makes a port of the app's computer public, so the user's Preview tab can
  * show it. It never starts a server: something must already answer there.
@@ -112,20 +138,7 @@ export async function exposePort({
 }) {
   if (port === NOVNC_PORT)
     return { error: `Port ${port} is the desktop itself; pick another.` }
-  const probe = await sandbox.runCommand({
-    cmd: 'curl',
-    args: [
-      '-s',
-      '-o',
-      '/dev/null',
-      '-w',
-      '%{http_code}',
-      '--max-time',
-      '5',
-      `http://localhost:${port}${path}`,
-    ],
-  })
-  const status = Number(await probe.stdout())
+  const status = await answers({ sandbox, port, path })
   if (!status)
     return {
       error: `Nothing is serving port ${port}. Start the server with bash, in the background, then try again.`,
@@ -202,33 +215,40 @@ export async function xdotool({
     throw new Error(`xdotool ${args[0]} failed: ${await result.stderr()}`)
 }
 
+// Runs the command with its output in a file rather than the sandbox's pipe:
+// a job it backgrounds, like `a && b && server &`, keeps whatever output it
+// started with, and on the pipe the call would wait for it forever.
+// coreutils' timeout ends it; background jobs live on.
+const RUN = `out=$(mktemp); timeout "$1" bash -lc "$0" > "$out" 2>&1 < /dev/null; code=$?; cat "$out"; rm -f "$out"; exit $code`
+
 /** Runs a shell command in the app's workspace, with output capped. */
 export async function bash({
   sandbox,
   command,
-  timeoutMs,
+  timeoutSeconds,
   signal,
 }: {
   sandbox: Sandbox
   command: string
-  timeoutMs: number
+  timeoutSeconds: number
   signal?: AbortSignal
 }) {
   const result = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', command],
+    args: ['-c', RUN, command, `${timeoutSeconds}s`],
     cwd: '/vercel/sandbox',
     env: DISPLAY,
-    timeoutMs,
     signal,
   })
-  const cap = (text: string) =>
-    text.length > OUTPUT_LIMIT
-      ? `${text.slice(0, OUTPUT_LIMIT)}\n… ${text.length - OUTPUT_LIMIT} more characters`
-      : text
+  const output = await result.stdout()
   return {
     exitCode: result.exitCode,
-    stdout: cap(await result.stdout()),
-    stderr: cap(await result.stderr()),
+    ...(result.exitCode === 124 && {
+      timedOut: `Stopped after ${timeoutSeconds}s. Background long-running servers.`,
+    }),
+    output:
+      output.length > OUTPUT_LIMIT
+        ? `${output.slice(0, OUTPUT_LIMIT)}\n… ${output.length - OUTPUT_LIMIT} more characters`
+        : output,
   }
 }

@@ -34,7 +34,7 @@ test('apps start empty, open by URL beside their desktop, rename, and delete', a
   await expect(page.getByRole('region', { name: 'Chat' })).toContainText(
     'Ask the agent to build something.',
   )
-  await expect(page.getByRole('region', { name: 'Desktop' })).toContainText(
+  await expect(page.locator('section[aria-label="Desktop"]')).toContainText(
     /Starting the desktop|Reconnecting to the desktop/,
   )
   await expect(
@@ -114,18 +114,29 @@ test('the composer shows the model, cycles its thinking level, and remembers it'
   await expect(composer.getByRole('button', { name: 'Send' })).toBeEnabled()
 })
 
-test('the screen pane starts on the computer tab', async ({ page }) => {
+test('the screen pane opens on the app tab, empty until the agent shows one', async ({
+  page,
+}) => {
   await stubDesktop(page)
   await page.goto('/v3')
   await createApp(page)
   const tabs = page.getByRole('tablist', { name: 'Screen' })
-  await expect(tabs.getByRole('tab')).toHaveText(['Computer'])
+  await expect(tabs.getByRole('tab')).toHaveText(['App', 'Computer'])
+  await expect(tabs.getByRole('tab', { name: 'App' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await expect(page.locator('[data-app-placeholder]')).toContainText(
+    'No app yet',
+  )
+  await expect(page.locator('iframe[title="App"]')).toHaveCount(0)
+  await tabs.getByRole('tab', { name: 'Computer' }).click()
   await expect(tabs.getByRole('tab', { name: 'Computer' })).toHaveAttribute(
     'aria-selected',
     'true',
   )
   // The desktop panel keeps its size while another tab is on top.
-  const desktop = page.getByRole('region', { name: 'Desktop' })
+  const desktop = page.locator('section[aria-label="Desktop"]')
   expect((await desktop.boundingBox())!.width).toBeGreaterThan(300)
 })
 
@@ -135,7 +146,7 @@ test('the desktop viewer keeps retrying when the connection fails', async ({
   const desktop = await stubDesktop(page)
   await page.goto('/v3')
   await createApp(page)
-  await expect(page.getByRole('region', { name: 'Desktop' })).toHaveAttribute(
+  await expect(page.locator('section[aria-label="Desktop"]')).toHaveAttribute(
     'data-status',
     'reconnecting',
   )
@@ -167,4 +178,19 @@ test('voice mode can read what the agent is doing', async ({ page }) => {
     queuedTasks: 0,
     lastReply: null,
   })
+})
+
+test('the header switches between the examples', async ({ page }) => {
+  await stubDesktop(page)
+  await page.goto('/v3')
+  await page.getByRole('button', { name: 'Example: v3' }).click()
+  const menu = page.getByRole('menu')
+  await expect(menu.getByRole('menuitem')).toHaveText([
+    /v1\s*Canvas/,
+    /v2\s*Studio/,
+    /v3\s*Computer/,
+  ])
+  await menu.getByRole('menuitem', { name: /v2/ }).click()
+  await expect(page).toHaveURL(/\/v2/)
+  await expect(page.getByRole('button', { name: 'Example: v2' })).toBeVisible()
 })

@@ -2,13 +2,20 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Tabs } from '@base-ui/react/tabs'
-import { ExternalLink, Globe, Monitor, RotateCw, X } from 'lucide-react'
+import {
+  AppWindow,
+  ExternalLink,
+  LoaderCircle,
+  Monitor,
+  RotateCw,
+} from 'lucide-react'
 import { IconButton } from '@/ui/button'
-import { cx } from '@/ui/cx'
 import type { AppMessage } from '../_lib/agent'
+import { appsApi } from '../_lib/rpc'
 import { useSession } from '../_lib/session'
 import { DesktopView } from './desktop-view'
 
+type Tab = 'app' | 'computer'
 type Preview = { port: number; url: string }
 
 /**
@@ -16,36 +23,69 @@ type Preview = { port: number; url: string }
  * show_computer calls in the conversation, so a reload shows it again.
  */
 function agentViews(messages: AppMessage[]) {
-  const previews = new Map<number, Preview>()
-  let latest: { callId: string; tab: string } | null = null
+  let preview: Preview | null = null
+  let latest: { callId: string; tab: Tab } | null = null
   for (const message of messages)
     for (const part of message.parts) {
       if (!('toolCallId' in part) || part.state !== 'output-available') continue
       if (part.type === 'tool-show_preview') {
         const output = part.output as Partial<Preview>
         if (!output.url || !output.port) continue
-        previews.set(output.port, { port: output.port, url: output.url })
-        latest = { callId: part.toolCallId, tab: `preview:${output.port}` }
+        preview = { port: output.port, url: output.url }
+        latest = { callId: part.toolCallId, tab: 'app' }
       }
       if (part.type === 'tool-show_computer')
         latest = { callId: part.toolCallId, tab: 'computer' }
     }
-  return { previews: [...previews.values()], latest }
+  return { preview, latest }
+}
+
+const POLL_MS = 5000
+
+/** Whether the app's server answers, checked while its tab is open. */
+function useAppStatus({
+  appId,
+  port,
+  watching,
+}: {
+  appId: string
+  port: number | null
+  watching: boolean
+}) {
+  const [up, setUp] = useState<boolean | null>(null)
+  useEffect(() => {
+    setUp(null)
+  }, [port])
+  useEffect(() => {
+    if (!port || !watching) return
+    let current = true
+    const check = () =>
+      appsApi
+        .portStatus({ id: appId, port })
+        .then((status) => current && setUp(status.up))
+        .catch(() => current && setUp(false))
+    void check()
+    const timer = setInterval(check, POLL_MS)
+    return () => {
+      current = false
+      clearInterval(timer)
+    }
+  }, [appId, port, watching])
+  return up
 }
 
 /**
- * The agent's computer and the servers it shows, as tabs after just-say's
- * pane. The agent switches tabs with its tools; the user can too. Panels stay
- * mounted and sized, so the desktop stays connected behind a preview.
+ * The agent's app and its computer, as two tabs after just-say's pane. The
+ * agent switches them with its tools; the user can too. Panels stack and stay
+ * mounted, so the desktop stays connected and sized behind the app.
  */
 export function ScreenPane({ appId }: { appId: string }) {
   const { state } = useSession()
-  const { previews, latest } = useMemo(
+  const { preview, latest } = useMemo(
     () => agentViews(state.messages),
     [state.messages],
   )
-  const [tab, setTab] = useState(latest?.tab ?? 'computer')
-  const [closed, setClosed] = useState<number[]>([])
+  const [tab, setTab] = useState<Tab>(latest?.tab ?? 'app')
   const [reloads, setReloads] = useState(0)
   // A new call from the agent moves the user to what it shows.
   const applied = useRef(latest?.callId)
@@ -53,54 +93,49 @@ export function ScreenPane({ appId }: { appId: string }) {
     if (!latest || latest.callId === applied.current) return
     applied.current = latest.callId
     setTab(latest.tab)
-    setClosed((ports) =>
-      ports.filter((port) => `preview:${port}` !== latest.tab),
-    )
+    if (latest.tab === 'app') setReloads((count) => count + 1)
   }, [latest])
 
-  const open = previews.filter((preview) => !closed.includes(preview.port))
-  const current = open.find((preview) => `preview:${preview.port}` === tab)
-  const selected = current || tab === 'computer' ? tab : 'computer'
+  const up = useAppStatus({
+    appId,
+    port: preview?.port ?? null,
+    watching: tab === 'app',
+  })
+  // A server that comes back loads again.
+  const wasUp = useRef(up)
+  useEffect(() => {
+    if (up && wasUp.current === false) setReloads((count) => count + 1)
+    wasUp.current = up
+  }, [up])
 
   return (
     <Tabs.Root
-      value={selected}
-      onValueChange={(value) => setTab(String(value))}
+      value={tab}
+      onValueChange={(value) => setTab(value as Tab)}
       className="flex min-h-0 min-w-0 flex-col pr-3 pb-3"
     >
       <div className="flex h-10 shrink-0 items-center gap-2">
-        <Tabs.List
-          aria-label="Screen"
-          className="flex min-w-0 [scrollbar-width:none] items-center gap-1 overflow-x-auto"
-        >
-          <PaneTab
-            value="computer"
-            icon={<Monitor size={13} />}
-            name="Computer"
-          />
-          {open.map((preview) => (
-            <PaneTab
-              key={preview.port}
-              value={`preview:${preview.port}`}
-              icon={<Globe size={13} />}
-              title={preview.url}
-              name={`localhost:${preview.port}`}
-              onClose={() => setClosed((ports) => [...ports, preview.port])}
-            />
-          ))}
+        <Tabs.List aria-label="Screen" className="flex items-center gap-1">
+          <PaneTab value="app" icon={<AppWindow size={13} />}>
+            App
+            {preview && <span className="text-faint">:{preview.port}</span>}
+          </PaneTab>
+          <PaneTab value="computer" icon={<Monitor size={13} />}>
+            Computer
+          </PaneTab>
         </Tabs.List>
-        {current && (
+        {tab === 'app' && preview && up && (
           <div className="ml-auto flex shrink-0 items-center gap-0.5">
             <IconButton
-              label="Reload preview"
+              label="Reload app"
               onClick={() => setReloads(reloads + 1)}
             >
               <RotateCw size={14} />
             </IconButton>
             <IconButton
-              label="Open preview in a new tab"
+              label="Open app in a new tab"
               onClick={() =>
-                window.open(current.url, '_blank', 'noopener,noreferrer')
+                window.open(preview.url, '_blank', 'noopener,noreferrer')
               }
             >
               <ExternalLink size={14} />
@@ -109,72 +144,102 @@ export function ScreenPane({ appId }: { appId: string }) {
         )}
       </div>
       <div className="relative min-h-0 flex-1">
-        <Tabs.Panel value="computer" keepMounted className={panel}>
-          <DesktopView appId={appId} />
+        <Tabs.Panel value="app" keepMounted className={panel} render={stacked}>
+          <div inert={tab !== 'app'} className="size-full">
+            {preview && up ? (
+              <iframe
+                key={`${preview.url}:${reloads}`}
+                title="App"
+                src={preview.url}
+                allow="clipboard-write"
+                className="size-full bg-white"
+              />
+            ) : (
+              <AppPlaceholder
+                port={preview?.port ?? null}
+                checking={up === null}
+              />
+            )}
+          </div>
         </Tabs.Panel>
-        {open.map((preview) => (
-          <Tabs.Panel
-            key={preview.port}
-            value={`preview:${preview.port}`}
-            keepMounted
-            className={panel}
-          >
-            <iframe
-              key={reloads}
-              title={`Preview of port ${preview.port}`}
-              src={preview.url}
-              allow="clipboard-write"
-              className="size-full bg-white"
-            />
-          </Tabs.Panel>
-        ))}
+        <Tabs.Panel
+          value="computer"
+          keepMounted
+          className={panel}
+          render={stacked}
+        >
+          <div inert={tab !== 'computer'} className="size-full">
+            <DesktopView appId={appId} />
+          </div>
+        </Tabs.Panel>
       </div>
     </Tabs.Root>
   )
 }
 
+function AppPlaceholder({
+  port,
+  checking,
+}: {
+  port: number | null
+  checking: boolean
+}) {
+  return (
+    <div
+      data-app-placeholder
+      className="grid size-full place-items-center bg-shade"
+    >
+      <div className="flex max-w-72 flex-col items-center gap-2 text-center">
+        {port && checking ? (
+          <p className="flex items-center gap-2 text-faint">
+            <LoaderCircle size={14} className="animate-spin" />
+            Connecting to port {port}
+          </p>
+        ) : (
+          <>
+            <AppWindow size={24} strokeWidth={1.5} className="text-faint" />
+            <p className="text-dim">
+              {port ? `Nothing is running on port ${port}` : 'No app yet'}
+            </p>
+            <p className="text-faint">
+              {port
+                ? 'Ask the agent to start it again.'
+                : 'When the agent runs one, it shows up here.'}
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // Panels stack, the selected one on top. Hidden ones keep their size, so the
 // desktop doesn't shrink to nothing, and stay visible to the browser, which
-// stops painting cross-origin frames it considers hidden.
+// stops painting cross-origin frames it considers hidden. So they drop the
+// `hidden` attribute, which Tailwind's preflight turns into display: none;
+// their content is inert instead.
 const panel =
-  'absolute inset-0 z-10 outline-none [&[hidden]]:block data-hidden:pointer-events-none data-hidden:z-0'
+  'absolute inset-0 z-10 outline-none data-hidden:pointer-events-none data-hidden:z-0'
+const stacked = (props: React.ComponentProps<'div'>) => (
+  <div {...props} hidden={false} />
+)
 
 function PaneTab({
   value,
   icon,
-  name,
-  title,
-  onClose,
+  children,
 }: {
-  value: string
+  value: Tab
   icon: React.ReactNode
-  name: string
-  title?: string
-  onClose?: () => void
+  children: React.ReactNode
 }) {
   return (
-    <div className="group flex shrink-0 items-center has-[[data-active]]:bg-shade">
-      <Tabs.Tab
-        value={value}
-        title={title}
-        className={cx(
-          'flex h-7 max-w-44 items-center gap-1.5 text-xs text-muted outline-none hover:text-bright focus-visible:text-bright data-active:text-bright',
-          onClose ? 'pr-0.5 pl-2' : 'px-2',
-        )}
-      >
-        {icon}
-        <span className="truncate">{name}</span>
-      </Tabs.Tab>
-      {onClose && (
-        <IconButton
-          label={`Close ${name}`}
-          size="icon-sm"
-          onClick={onClose}
-          className="mr-0.5 size-5"
-        >
-          <X size={11} />
-        </IconButton>
-      )}
-    </div>
+    <Tabs.Tab
+      value={value}
+      className="flex h-7 items-center gap-1.5 px-2 text-xs text-muted outline-none hover:text-bright focus-visible:text-bright data-active:bg-shade data-active:text-bright"
+    >
+      {icon}
+      <span className="flex gap-0.5">{children}</span>
+    </Tabs.Tab>
   )
 }
